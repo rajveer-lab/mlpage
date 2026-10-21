@@ -1,0 +1,2149 @@
+<title>ML Page Replacement</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<style>
+:root {
+  /* Design plan: a lab sheet for memory paging. Cool paper, graphite ink and hairline rules; colour is kept
+     for data (one hue per policy, the same on every chart) and for the page-fault mark. IBM Plex Sans for
+     words, IBM Plex Mono for every number, page and reference string. */
+  /* Layout: one column up to 960px, 16px + safe-area gutters, sticky tab strip; wide tables scroll sideways in their own boxes. */
+  --paper: #f1f2ef;
+  --sheet: #fbfbf9;
+  --ink: #14181c;
+  --ink-2: #4a525b;
+  --rule: #d2d6d9;
+  --fault: #c0392b;
+  /* chart tokens */
+  --grid: #e3e5e5;
+  --axis: #b3b8bc;
+  --c-learned: #2a78d6;
+  --c-lru: #eb6834;
+  --c-arc: #1baf7a;
+  --c-lecar: #eda100;
+  --c-clock: #e87ba4;
+  --c-fifo: #008300;
+  --c-lfu: #6250d6;
+  --c-opt: #7a7974;
+  --pole-evict: #c0392b;
+  --pole-keep: #1d7f8a;
+  /* type */
+  --font-ui: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --font-data: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+  /* derived */
+  --fault-wash: color-mix(in srgb, var(--fault) 15%, var(--sheet));
+  --ink-wash: color-mix(in srgb, var(--ink) 6%, var(--sheet));
+  --on-ink-2: color-mix(in srgb, var(--paper) 74%, var(--ink));
+  --gl: max(16px, env(safe-area-inset-left, 0px));
+  --gr: max(16px, env(safe-area-inset-right, 0px));
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --paper: #0f1215;
+    --sheet: #161a1e;
+    --ink: #e3e6e9;
+    --ink-2: #a0a9b2;
+    --rule: #2c3238;
+    --fault: #ef6b5e;
+    --grid: #23292e;
+    --axis: #454c53;
+    --c-learned: #3987e5;
+    --c-lru: #d95926;
+    --c-arc: #199e70;
+    --c-lecar: #c98500;
+    --c-clock: #d55181;
+    --c-fifo: #008300;
+    --c-lfu: #9085e9;
+    --c-opt: #8e8d87;
+    --pole-evict: #ef6b5e;
+    --pole-keep: #3aa8b3;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --paper: #0f1215;
+  --sheet: #161a1e;
+  --ink: #e3e6e9;
+  --ink-2: #a0a9b2;
+  --rule: #2c3238;
+  --fault: #ef6b5e;
+  --grid: #23292e;
+  --axis: #454c53;
+  --c-learned: #3987e5;
+  --c-lru: #d95926;
+  --c-arc: #199e70;
+  --c-lecar: #c98500;
+  --c-clock: #d55181;
+  --c-fifo: #008300;
+  --c-lfu: #9085e9;
+  --c-opt: #8e8d87;
+  --pole-evict: #ef6b5e;
+  --pole-keep: #3aa8b3;
+  color-scheme: dark;
+}
+
+*, *::before, *::after { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
+body {
+  margin: 0;
+  background: var(--paper);
+  color: var(--ink);
+  font-family: var(--font-ui);
+  font-size: 15px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+}
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0 0 auto;
+  height: env(safe-area-inset-top, 0px);
+  z-index: 10;
+  background: var(--paper);
+}
+[hidden] { display: none !important; }
+a { color: inherit; text-underline-offset: 2px; }
+:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
+button, input, select { font: inherit; color: inherit; }
+code, .mono { font-family: var(--font-data); font-size: 0.92em; }
+.vh { position: absolute !important; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); clip-path: inset(50%); white-space: nowrap; }
+
+.wrap {
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: 0 28px;
+}
+.col { max-width: 960px; margin-inline: auto; min-width: 0; }
+
+/* header and tabs */
+.top { display: flex; align-items: center; gap: 12px; padding-top: 10px; padding-bottom: 4px; }
+.brand { display: flex; align-items: center; gap: 10px; min-height: 44px; min-width: 0; text-decoration: none; }
+.logo { width: 46px; height: 20px; flex: none; }
+.logo .slot { fill: var(--sheet); stroke: var(--ink); stroke-width: 1.5; }
+.logo .hot { fill: var(--fault); stroke: var(--fault); }
+.brand-name { display: block; font-weight: 600; font-size: 16px; line-height: 1.15; letter-spacing: -0.01em; }
+.brand-sub { display: block; font: 500 10.5px/1.4 var(--font-data); letter-spacing: 0.05em; text-transform: uppercase; color: var(--ink-2); }
+.theme-btn {
+  margin-left: auto; flex: none; min-height: 44px; min-width: 44px; padding: 0 10px;
+  border: 1px solid var(--rule); border-radius: 3px; background: var(--sheet); cursor: pointer;
+  font: 500 12px var(--font-data); color: var(--ink-2);
+}
+.theme-btn:hover { color: var(--ink); border-color: var(--ink-2); }
+.tabs {
+  position: sticky; top: env(safe-area-inset-top, 0px); z-index: 6;
+  margin-left: calc(-1 * var(--gl)); margin-right: calc(-1 * var(--gr));
+  padding-left: var(--gl); padding-right: var(--gr);
+  background: var(--paper); border-bottom: 1px solid var(--rule);
+}
+.tabs-row { display: flex; }
+.tabs a {
+  flex: 1 1 0; min-width: 0; display: flex; align-items: center; justify-content: center; gap: 6px;
+  min-height: 46px; padding: 0 4px; margin-bottom: -1px;
+  text-decoration: none; color: var(--ink-2); font-weight: 500; font-size: 14.5px;
+  border-bottom: 2px solid transparent;
+}
+.tabs a .ix { font: 500 11px var(--font-data); color: var(--ink-2); display: none; }
+.tabs a:hover { color: var(--ink); }
+.tabs a[aria-current="page"] { color: var(--ink); font-weight: 600; border-bottom-color: var(--ink); }
+@media (min-width: 720px) {
+  .tabs a { flex: 0 0 auto; padding: 0 18px; }
+  .tabs a .ix { display: inline; }
+}
+
+/* views and sections */
+.view { padding-top: 18px; }
+h1 { font-size: 23px; line-height: 1.2; margin: 0 0 6px; letter-spacing: -0.015em; font-weight: 600; }
+.lede { margin: 0 0 14px; color: var(--ink-2); max-width: 64ch; }
+.sec {
+  display: flex; align-items: baseline; gap: 10px; width: 100%;
+  margin: 26px 0 10px; padding: 10px 0 0; border-top: 1px solid var(--rule);
+  font-size: 12.5px; font-weight: 600; letter-spacing: 0.07em; text-transform: uppercase; color: var(--ink);
+}
+.sec .no { font-family: var(--font-data); font-weight: 500; color: var(--ink-2); letter-spacing: 0; }
+h3.sub { font-size: 14px; margin: 18px 0 6px; font-weight: 600; }
+p { margin: 0 0 10px; }
+.note, .hint { color: var(--ink-2); font-size: 13px; max-width: 70ch; }
+.hint { margin: 6px 0 0; font-size: 12.5px; }
+.error { color: var(--fault); font-size: 13px; margin: 6px 0 0; font-weight: 500; }
+.cmd {
+  font: 12.5px/1.5 var(--font-data); color: var(--ink-2); margin: 10px 0;
+  overflow-wrap: anywhere;
+}
+.cmd b { color: var(--ink); font-weight: 500; }
+fieldset { border: 0; margin: 0; padding: 0; min-width: 0; }
+legend { padding: 0; float: left; width: 100%; }
+legend + * { clear: both; }
+.fatal { border: 1px solid var(--fault); background: var(--fault-wash); padding: 10px 12px; margin: 16px 0; border-radius: 3px; }
+
+/* result strip */
+.summary {
+  margin: 0 0 6px; padding: 10px 12px; background: var(--sheet);
+  border: 1px solid var(--rule); border-left: 3px solid var(--ink); border-radius: 2px;
+  font-size: 14.5px; line-height: 1.45;
+}
+.summary .tag {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; margin-bottom: 4px;
+  font: 600 11px/1.4 var(--font-data); letter-spacing: 0.06em; text-transform: uppercase; color: var(--ink-2);
+}
+.summary b { font-family: var(--font-data); font-weight: 600; }
+.linkbtn {
+  border: 0; background: none; padding: 0 2px; min-height: 30px; cursor: pointer;
+  font: 500 12px var(--font-data); color: var(--ink); text-decoration: underline; text-underline-offset: 2px;
+  letter-spacing: 0; text-transform: none;
+}
+
+/* run layout */
+.run-grid { display: block; }
+@media (min-width: 880px) {
+  .run-grid { display: grid; grid-template-columns: 330px minmax(0, 1fr); gap: 0 32px; align-items: start; }
+}
+
+/* radio and checkbox options */
+.opt { position: relative; min-width: 0; }
+.opt > input { position: absolute; opacity: 0; width: 1px; height: 1px; margin: 0; pointer-events: none; }
+.wl-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.wl {
+  display: block; height: 100%; min-height: 64px; padding: 8px 10px 9px; cursor: pointer;
+  border: 1px solid var(--rule); border-radius: 3px; background: var(--sheet);
+}
+.wl:hover { border-color: var(--ink-2); }
+.wl .nm { font: 600 14px/1.3 var(--font-data); }
+.wl .kd { font: 400 10.5px var(--font-data); color: var(--ink-2); margin-left: 6px; letter-spacing: 0.03em; }
+.wl .ds { display: block; margin-top: 3px; font-size: 12.5px; line-height: 1.35; color: var(--ink-2); }
+.opt > input:checked + .wl { background: var(--ink); border-color: var(--ink); color: var(--paper); }
+.opt > input:checked + .wl .kd, .opt > input:checked + .wl .ds { color: var(--on-ink-2); }
+.opt > input:focus-visible + label { outline: 2px solid var(--ink); outline-offset: 2px; }
+
+.seg {
+  display: grid; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr);
+  border: 1px solid var(--rule); border-radius: 3px; background: var(--sheet);
+}
+.seg .opt + .opt > label { border-left: 1px solid var(--rule); }
+.seg label {
+  display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100%;
+  min-height: 48px; padding: 4px 2px; cursor: pointer; text-align: center;
+  font: 500 14px/1.2 var(--font-data); font-variant-numeric: tabular-nums;
+}
+.seg label small { font-size: 10.5px; font-weight: 400; color: var(--ink-2); margin-top: 2px; }
+.seg label:hover { background: var(--ink-wash); }
+.seg .opt > input:checked + label { background: var(--ink); color: var(--paper); }
+.seg .opt > input:checked + label small { color: var(--on-ink-2); }
+
+.chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.chip {
+  display: inline-flex; align-items: center; gap: 7px; min-height: 44px; padding: 0 12px;
+  border: 1px solid var(--rule); border-radius: 3px; background: var(--sheet); cursor: pointer;
+  font: 500 13.5px var(--font-data);
+}
+.chip:hover { border-color: var(--ink-2); }
+.chips.radio .opt > input:checked + .chip { background: var(--ink); color: var(--paper); border-color: var(--ink); }
+.pchip::before {
+  content: ""; width: 16px; height: 16px; flex: none; border: 2px solid var(--pc); border-radius: 3px; background: var(--sheet);
+}
+.opt > input:checked + .pchip { border-color: var(--ink); }
+.opt > input:checked + .pchip::before { background: var(--pc); box-shadow: inset 0 0 0 2px var(--sheet); }
+.opt > input:checked + .pchip.pol-OPT::before { background: repeating-linear-gradient(45deg, var(--c-opt) 0 1.5px, var(--sheet) 1.5px 4px); box-shadow: none; }
+.opt > input:not(:checked) + .pchip { color: var(--ink-2); border-style: dashed; }
+.opt > input:disabled + .pchip { cursor: default; }
+.pchip .lock { font: 400 10.5px var(--font-ui); color: var(--ink-2); }
+
+/* sticky run actions */
+.actions {
+  position: sticky; bottom: 0; z-index: 4;
+  margin: 18px calc(-1 * var(--gr)) 0 calc(-1 * var(--gl));
+  padding: 0 var(--gr) calc(10px + env(safe-area-inset-bottom, 0px)) var(--gl);
+  background: var(--paper); border-top: 1px solid var(--rule);
+}
+@media (min-width: 880px) { .actions { margin-left: 0; margin-right: 0; padding-left: 0; padding-right: 0; } }
+.progress { height: 3px; margin: -1px 0 9px; background: var(--rule); }
+.progress span { display: block; height: 100%; width: 0; background: var(--ink); transition: width 0.2s ease; }
+.actions-row { display: flex; gap: 8px; }
+.btn {
+  flex: 1 1 0; min-width: 0; min-height: 46px; padding: 0 12px; cursor: pointer;
+  border: 1px solid var(--ink); border-radius: 3px; background: var(--sheet); color: var(--ink);
+  font: 600 14.5px var(--font-ui);
+}
+.btn:hover { background: var(--ink-wash); }
+.btn.primary { background: var(--ink); color: var(--paper); }
+.btn.primary:hover { background: var(--ink); opacity: 0.92; }
+.btn:disabled { opacity: 0.45; cursor: default; }
+.btn.small { flex: none; min-height: 44px; font-size: 13px; padding: 0 12px; font-weight: 500; border-color: var(--rule); }
+.status { margin: 7px 0 0; font: 12.5px/1.4 var(--font-data); color: var(--ink-2); min-height: 1.4em; }
+
+/* panels, charts, legends, tooltips */
+.panel { background: var(--sheet); border: 1px solid var(--rule); border-radius: 3px; padding: 10px 10px 4px; margin: 8px 0; min-width: 0; }
+.panel .cap { font-size: 12.5px; color: var(--ink-2); margin: 0 0 6px; }
+.plot { position: relative; min-width: 0; width: 100%; }
+.plot svg { display: block; overflow: visible; max-width: 100%; }
+.legend { display: flex; flex-wrap: wrap; gap: 2px 14px; list-style: none; margin: 0 0 6px; padding: 0; font-size: 12.5px; color: var(--ink-2); }
+.legend li { display: inline-flex; align-items: center; gap: 6px; min-height: 22px; }
+.key { width: 24px; height: 12px; flex: none; overflow: visible; }
+.pol-FIFO { --pc: var(--c-fifo); }
+.pol-LRU { --pc: var(--c-lru); }
+.pol-LFU { --pc: var(--c-lfu); }
+.pol-CLOCK { --pc: var(--c-clock); }
+.pol-ARC { --pc: var(--c-arc); }
+.pol-LeCaR { --pc: var(--c-lecar); }
+.pol-Learned { --pc: var(--c-learned); }
+.pol-OPT { --pc: var(--c-opt); }
+.pole-evict { --pc: var(--pole-evict); }
+.pole-keep { --pc: var(--pole-keep); }
+.s-grid { stroke: var(--grid); stroke-width: 1; shape-rendering: crispEdges; }
+.s-axis { stroke: var(--axis); stroke-width: 1; shape-rendering: crispEdges; }
+.s-tick { fill: var(--ink-2); font: 400 11px var(--font-data); font-variant-numeric: tabular-nums; }
+.s-label { fill: var(--ink); font: 500 12.5px var(--font-ui); }
+.s-label.mono { font: 500 12px var(--font-data); }
+.s-gt { fill: var(--ink-2); font: 600 10.5px var(--font-data); letter-spacing: 0.06em; }
+.s-val { fill: var(--ink); font: 500 11.5px var(--font-data); font-variant-numeric: tabular-nums; stroke: var(--sheet); stroke-width: 4px; stroke-linejoin: round; paint-order: stroke; }
+.s-note { fill: var(--ink-2); font: 400 11px var(--font-ui); }
+.halo { stroke: var(--sheet); stroke-width: 4px; stroke-linejoin: round; paint-order: stroke; }
+.s-bar { fill: var(--pc); }
+.s-bar.ref { stroke: var(--c-opt); stroke-width: 1.5; }
+.s-hatch { stroke: var(--c-opt); stroke-width: 1.6; }
+.s-hatch-bg { fill: var(--sheet); }
+.s-line { fill: none; stroke: var(--pc); stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
+.s-line.ref { stroke: var(--c-opt); stroke-dasharray: 5 4; stroke-linecap: butt; }
+.s-mark { fill: var(--pc); stroke: var(--sheet); stroke-width: 2; paint-order: stroke; }
+.s-mark.ref { fill: var(--c-opt); }
+.s-ring { fill: none; stroke: var(--ink); stroke-width: 1.5; }
+.s-refline { stroke: var(--c-opt); stroke-width: 1.5; stroke-dasharray: 4 3; }
+.s-cross { stroke: var(--ink-2); stroke-width: 1; shape-rendering: crispEdges; pointer-events: none; }
+.s-hit { fill: var(--sheet); fill-opacity: 0; }
+.s-sel { fill: var(--ink); fill-opacity: 0.07; }
+.s-ov { touch-action: pan-y; cursor: crosshair; outline: none; }
+.s-ov:focus-visible { stroke: var(--ink); stroke-width: 1.5; stroke-dasharray: 3 3; }
+.bar-row { cursor: pointer; outline: none; }
+.bar-row.on .s-bar, .bar-row:hover .s-bar { opacity: 0.82; }
+.bar-row:focus-visible .s-hit { stroke: var(--ink); stroke-width: 1.5; }
+.bar-row.sel .s-label { font-weight: 700; }
+svg text { pointer-events: none; }
+svg, .opt label, .btn, .tabs a, summary { -webkit-tap-highlight-color: transparent; }
+.s-hl { pointer-events: none; }
+
+.tip {
+  position: fixed; left: 0; top: 0; z-index: 30;
+  max-width: min(290px, calc(100vw - 16px));
+  padding: 8px 10px; border: 1px solid var(--rule); border-radius: 4px;
+  background: var(--sheet); color: var(--ink);
+  font-size: 12.5px; line-height: 1.35; pointer-events: none;
+  box-shadow: 0 6px 18px color-mix(in srgb, var(--ink) 18%, transparent);
+}
+.tip-t { font-weight: 600; margin-bottom: 4px; font-size: 12.5px; }
+.tip-r { display: grid; grid-template-columns: 24px auto minmax(0, 1fr); gap: 7px; align-items: center; white-space: nowrap; min-height: 19px; }
+.tip-r b { font-family: var(--font-data); font-weight: 600; font-variant-numeric: tabular-nums; text-align: right; }
+.tip-r span { color: var(--ink-2); }
+.tip-l { color: var(--ink-2); font-family: var(--font-data); font-size: 12px; font-variant-numeric: tabular-nums; }
+.tip-l b { color: var(--ink); font-weight: 600; }
+
+/* tables */
+.scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; max-width: 100%; min-width: 0; border: 1px solid var(--rule); border-radius: 3px; background: var(--sheet); margin: 8px 0; }
+table.data { border-collapse: separate; border-spacing: 0; width: 100%; font-size: 13.5px; }
+.data caption { text-align: left; padding: 8px 10px 0; font-size: 12.5px; color: var(--ink-2); }
+.data th, .data td { padding: 8px 10px; text-align: right; white-space: nowrap; border-bottom: 1px solid var(--grid); }
+.data thead th { font: 600 11.5px/1.3 var(--font-ui); color: var(--ink-2); vertical-align: bottom; white-space: normal; min-width: 58px; border-bottom: 1px solid var(--rule); }
+.data thead tr.grp th { text-align: center; color: var(--ink); border-bottom: 1px solid var(--rule); padding-bottom: 4px; }
+.data th:first-child, .data td:first-child { text-align: left; position: sticky; left: 0; z-index: 1; background: var(--sheet); }
+.data td { font-family: var(--font-data); font-variant-numeric: tabular-nums; }
+.data td:first-child { font-family: var(--font-data); font-weight: 500; }
+.data tbody tr:last-child td { border-bottom: 0; }
+.data tr.all td { border-top: 1px solid var(--ink-2); font-weight: 600; }
+.data td.best { font-weight: 700; }
+.data td.muted { color: var(--ink-2); }
+.data .nw { white-space: nowrap; font-weight: 400; }
+.pcell { display: inline-flex; align-items: center; gap: 7px; }
+details { margin: 6px 0 4px; }
+summary {
+  display: flex; align-items: center; gap: 8px; min-height: 44px; cursor: pointer; list-style: none;
+  font: 500 12.5px var(--font-data); color: var(--ink-2);
+}
+summary::-webkit-details-marker { display: none; }
+summary::before { content: "+"; display: inline-grid; place-items: center; width: 18px; height: 18px; border: 1px solid var(--rule); border-radius: 2px; font-size: 13px; color: var(--ink); }
+details[open] > summary::before { content: "\2212"; }
+summary:hover { color: var(--ink); }
+
+/* textbook */
+.tb-controls { display: grid; gap: 14px; grid-template-columns: minmax(0, 1fr); }
+@media (min-width: 720px) { .tb-controls { grid-template-columns: minmax(0, 1fr) auto; } .tb-controls .span { grid-column: 1 / -1; } }
+.field > label:not(.ns), .field > legend, .flabel { display: block; font-size: 12.5px; font-weight: 600; color: var(--ink-2); margin-bottom: 5px; }
+input[type="text"], input[type="number"] {
+  width: 100%; min-height: 46px; padding: 8px 10px; border: 1px solid var(--rule); border-radius: 3px;
+  background: var(--sheet); color: var(--ink); font: 500 16px var(--font-data); font-variant-numeric: tabular-nums;
+}
+input[type="text"]:focus-visible, input[type="number"]:focus-visible { outline: 2px solid var(--ink); outline-offset: 0; border-color: var(--ink); }
+input[aria-invalid="true"] { border-color: var(--fault); }
+.presets { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.stepper { display: inline-grid; grid-template-columns: 46px 64px 46px; border: 1px solid var(--rule); border-radius: 3px; background: var(--sheet); }
+.stepper button { min-height: 46px; border: 0; background: none; cursor: pointer; font: 500 20px var(--font-data); color: var(--ink); }
+.stepper button:hover { background: var(--ink-wash); }
+.stepper button:disabled { color: var(--rule); cursor: default; background: none; }
+.stepper input { border: 0; border-left: 1px solid var(--rule); border-right: 1px solid var(--rule); border-radius: 0; text-align: center; min-height: 46px; -moz-appearance: textfield; appearance: textfield; }
+.stepper input::-webkit-outer-spin-button, .stepper input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+.ft-box { margin-top: 10px; }
+table.ft { border-collapse: separate; border-spacing: 0; font-family: var(--font-data); font-variant-numeric: tabular-nums; font-size: 14px; }
+.ft th, .ft td { min-width: 34px; height: 34px; padding: 0 5px; text-align: center; border-right: 1px solid var(--grid); border-bottom: 1px solid var(--grid); }
+.ft thead th { height: 38px; font-weight: 600; font-size: 15px; color: var(--ink); border-bottom: 1.5px solid var(--ink); }
+.ft thead th small { display: block; font-size: 9.5px; font-weight: 400; color: var(--ink-2); line-height: 1; margin-top: 2px; }
+.ft th[scope="row"], .ft .corner { position: sticky; left: 0; z-index: 1; background: var(--sheet); text-align: left; padding: 0 10px; font: 500 11.5px var(--font-data); color: var(--ink-2); white-space: nowrap; border-right: 1.5px solid var(--ink); }
+.ft td.new { background: var(--fault-wash); font-weight: 600; }
+.ft td.hit { box-shadow: inset 0 0 0 2px var(--ink-2); font-weight: 600; }
+.ft tr.res td { font-weight: 700; }
+.ft tr.res td.f { color: var(--fault); }
+.ft tr.res td.h { color: var(--ink-2); font-weight: 400; font-size: 11px; }
+.ft tr.vic td { color: var(--ink-2); }
+.ft tr.res th, .ft tr.res td { border-top: 1.5px solid var(--ink); }
+.ft-key { display: flex; flex-wrap: wrap; gap: 4px 16px; font-size: 12.5px; color: var(--ink-2); margin: 8px 0 0; padding: 0; list-style: none; }
+.ft-key li { display: inline-flex; align-items: center; gap: 6px; }
+.sw { display: inline-grid; place-items: center; width: 22px; height: 20px; font: 600 11px var(--font-data); border: 1px solid var(--grid); }
+.sw.new { background: var(--fault-wash); }
+.sw.hit { box-shadow: inset 0 0 0 2px var(--ink-2); }
+.sw.f { color: var(--fault); border-color: transparent; }
+.sw.vic { color: var(--ink-2); font-weight: 400; }
+
+/* results */
+.hero { display: grid; gap: 12px; grid-template-columns: minmax(0, 1fr); align-items: start; }
+@media (min-width: 720px) { .hero { grid-template-columns: minmax(0, 1fr) minmax(0, 1.2fr); } }
+.hero-fig { padding: 12px 14px; background: var(--sheet); border: 1px solid var(--rule); border-left: 3px solid var(--c-learned); border-radius: 2px; }
+.big { display: block; font-size: 52px; line-height: 1; font-weight: 600; letter-spacing: -0.03em; }
+.hero-fig .cap { display: block; margin-top: 8px; font-size: 13.5px; color: var(--ink-2); }
+.sm-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin: 8px 0; }
+@media (min-width: 720px) { .sm-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
+.sm { margin: 0; padding: 8px 6px 2px; background: var(--sheet); border: 1px solid var(--rule); border-radius: 3px; min-width: 0; }
+.sm figcaption { font: 600 12.5px var(--font-data); padding: 0 4px 2px; display: flex; gap: 6px; align-items: baseline; flex-wrap: wrap; }
+.sm figcaption span { font: 400 10.5px var(--font-data); color: var(--ink-2); }
+.kv { list-style: none; margin: 8px 0; padding: 0; border-top: 1px solid var(--rule); }
+.kv li { display: flex; justify-content: space-between; gap: 12px; padding: 7px 0; border-bottom: 1px solid var(--grid); font-size: 13.5px; }
+.kv li span:first-child { color: var(--ink-2); min-width: 0; }
+.kv li b { font-family: var(--font-data); font-weight: 500; font-variant-numeric: tabular-nums; text-align: right; flex: none; max-width: 60%; }
+
+/* model */
+.pipe { display: grid; gap: 10px; grid-template-columns: minmax(0, 1fr); }
+@media (min-width: 760px) { .pipe { grid-template-columns: minmax(0, 1fr) 92px minmax(0, 1fr); align-items: start; } }
+.lane { padding: 10px 10px 12px; background: var(--sheet); border: 1px solid var(--rule); border-radius: 3px; min-width: 0; }
+.lane h3 { margin: 0 0 10px; font: 600 11.5px var(--font-data); letter-spacing: 0.06em; text-transform: uppercase; color: var(--ink-2); }
+.steps { list-style: none; margin: 0; padding: 0; counter-reset: st; }
+.steps li { position: relative; padding: 8px 10px 8px 38px; border: 1px solid var(--rule); border-radius: 3px; background: var(--paper); font-size: 13.5px; line-height: 1.4; counter-increment: st; }
+.steps li + li { margin-top: 14px; }
+.steps li + li::before { content: ""; position: absolute; left: 18px; top: -15px; height: 14px; border-left: 1.5px solid var(--ink-2); }
+.steps li::after { content: counter(st, decimal-leading-zero); position: absolute; left: 9px; top: 9px; font: 600 11px var(--font-data); color: var(--ink-2); }
+.steps li.dec { border-left: 3px solid var(--ink); }
+.steps .br { display: block; margin-top: 4px; font: 12px/1.45 var(--font-data); color: var(--ink-2); }
+.steps .br b { color: var(--ink); font-weight: 600; }
+.handoff { display: flex; align-items: center; justify-content: center; gap: 8px; padding: 2px 0; font: 500 11.5px/1.3 var(--font-data); color: var(--ink-2); text-align: center; }
+.handoff .arw { font-size: 18px; color: var(--ink); }
+@media (min-width: 760px) { .handoff { flex-direction: column; align-self: center; } .handoff .arw::after { content: "\2192"; } .handoff .arw span { display: none; } }
+.calc-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+@media (min-width: 720px) { .calc-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+.calc-grid .field { min-width: 0; }
+.ns { display: flex; align-items: center; gap: 8px; min-height: 40px; font-size: 12.5px; color: var(--ink-2); cursor: pointer; }
+.ns input { width: 20px; height: 20px; margin: 0; accent-color: var(--ink); flex: none; }
+.score { display: grid; gap: 6px 16px; grid-template-columns: minmax(0, 1fr); margin: 14px 0 6px; padding: 12px 14px; background: var(--sheet); border: 1px solid var(--rule); border-radius: 3px; }
+@media (min-width: 720px) { .score { grid-template-columns: auto minmax(0, 1fr); align-items: center; } }
+.score .lbl { font: 600 11px var(--font-data); letter-spacing: 0.05em; text-transform: uppercase; color: var(--ink-2); }
+.score .big { font-size: 46px; }
+.meter { position: relative; height: 10px; margin: 18px 0 6px; background: var(--grid); border-radius: 5px; }
+.meter span { position: absolute; left: 0; top: 0; bottom: 0; border-radius: 5px; background: var(--pc); }
+.meter i { position: absolute; top: -6px; bottom: -6px; width: 2px; margin-left: -1px; background: var(--ink); }
+.meter em { position: absolute; top: -20px; transform: translateX(-50%); font: 500 10.5px var(--font-data); font-style: normal; color: var(--ink-2); white-space: nowrap; }
+.score.dim { opacity: 0.5; }
+.verdict { margin: 0; font-size: 13.5px; }
+
+footer { margin-top: 36px; padding-top: 14px; border-top: 1px solid var(--rule); font-size: 13px; color: var(--ink-2); }
+footer p { margin: 0 0 6px; }
+footer .team { display: flex; flex-wrap: wrap; gap: 2px 16px; list-style: none; padding: 0; margin: 4px 0 10px; }
+footer .team li { font-size: 13px; }
+footer .team b { color: var(--ink); font-weight: 500; }
+footer .team code { color: var(--ink-2); }
+footer a { display: inline-flex; align-items: center; min-height: 44px; margin-right: 18px; color: var(--ink); font-weight: 500; }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { transition: none !important; animation: none !important; scroll-behavior: auto !important; }
+}
+</style>
+<!-- body -->
+<div class="wrap">
+  <header class="top col">
+    <a class="brand" href="#run" aria-label="ML Page Replacement, open the Run view">
+      <svg class="logo" viewBox="0 0 46 20" aria-hidden="true">
+        <rect class="slot" x="1" y="3" width="9" height="14" rx="1"></rect>
+        <rect class="slot" x="12.5" y="3" width="9" height="14" rx="1"></rect>
+        <rect class="hot" x="24" y="3" width="9" height="14" rx="1"></rect>
+        <rect class="slot" x="35.5" y="3" width="9" height="14" rx="1"></rect>
+      </svg>
+      <span><span class="brand-name">ML Page Replacement</span><span class="brand-sub">mlpr &middot; page fault simulator</span></span>
+    </a>
+    <button type="button" id="theme-btn" class="theme-btn" aria-label="Colour theme: automatic. Change theme">Auto</button>
+  </header>
+  <nav class="tabs" aria-label="Views">
+    <div class="col tabs-row">
+      <a href="#run" data-view="run"><span class="ix">1</span>Run</a>
+      <a href="#textbook" data-view="textbook"><span class="ix">2</span>Textbook</a>
+      <a href="#results" data-view="results"><span class="ix">3</span>Results</a>
+      <a href="#model" data-view="model"><span class="ix">4</span>Model</a>
+    </div>
+  </nav>
+
+  <main>
+    <div id="fatal" class="col fatal" role="alert" hidden></div>
+
+    <!-- RUN -->
+    <section class="view col" id="view-run" aria-labelledby="h-run">
+      <h1 id="h-run">Run the simulator</h1>
+      <p class="lede">Replay a reference string through each page replacement policy and count the page faults. The simulator runs in this browser.</p>
+      <div class="summary" id="run-summary" aria-live="polite">
+        <span class="tag"><span id="run-summary-tag">Result</span><button type="button" class="linkbtn" id="to-output">Chart and table</button></span>
+        <span id="run-summary-text">Loading the simulator&hellip;</span>
+      </div>
+      <div class="run-grid">
+        <form id="run-form" class="setup" novalidate>
+          <fieldset id="run-fields">
+            <fieldset class="group">
+              <legend class="sec"><span class="no">01</span>Workload</legend>
+              <div class="wl-grid" id="wl-grid"></div>
+            </fieldset>
+            <fieldset class="group">
+              <legend class="sec"><span class="no">02</span>Memory size</legend>
+              <div class="seg" id="mem-seg"></div>
+              <p class="hint">Share of the trace's distinct pages, at least 8 frames.</p>
+            </fieldset>
+            <fieldset class="group">
+              <legend class="sec"><span class="no">03</span>Trace length</legend>
+              <div class="seg" id="len-seg"></div>
+              <p class="hint">References in the reference string. Program traces are cut to this length.</p>
+            </fieldset>
+            <fieldset class="group">
+              <legend class="sec"><span class="no">04</span>Policies</legend>
+              <div class="chips" id="pol-chips"></div>
+              <p class="hint">LRU and OPT always run, because the comparisons need them.</p>
+            </fieldset>
+          </fieldset>
+          <div class="actions" id="run-actions">
+            <div class="progress" aria-hidden="true"><span id="run-progress"></span></div>
+            <div class="actions-row">
+              <button type="submit" id="run-btn" class="btn primary">Run</button>
+              <button type="button" id="sweep-btn" class="btn">Sweep memory sizes</button>
+              <button type="button" id="stop-btn" class="btn" hidden>Stop</button>
+            </div>
+            <p class="status" id="run-status" role="status">Ready.</p>
+          </div>
+        </form>
+
+        <div class="output" id="run-output" data-state="idle">
+          <h2 class="sec"><span class="no">05</span>Page faults per policy</h2>
+          <p class="note" id="run-context"></p>
+          <div class="panel">
+            <p class="cap">Fault rate per policy. OPT, hatched, is the lower bound: it knows the future.</p>
+            <div class="plot" id="run-chart"></div>
+          </div>
+          <div class="scroll"><table class="data" id="run-table"></table></div>
+          <p class="cmd" id="run-cmd"></p>
+          <p class="note">Random workloads (loop, zipf, phase, scan_hot, mixed) use a JavaScript random generator, so their numbers differ slightly from the Python results in the Results view.</p>
+
+          <h2 class="sec"><span class="no">06</span>Fault rate vs memory size</h2>
+          <div id="sweep-out">
+            <p class="note" id="sweep-empty">Tap <b>Sweep memory sizes</b> to run each chosen policy at 1%, 2%, 5% and 10% memory and plot the fault rate.</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- TEXTBOOK -->
+    <section class="view col" id="view-textbook" aria-labelledby="h-textbook" hidden>
+      <h1 id="h-textbook">Textbook exercise</h1>
+      <p class="lede">The frame table from an OS lab sheet. Each column is one reference: the pages in the frames after it, a hit or a page fault (F), and the page evicted.</p>
+      <form class="tb-controls" id="tb-form" novalidate>
+        <div class="field span">
+          <label for="tb-string">Reference string</label>
+          <input id="tb-string" type="text" autocomplete="off" autocapitalize="off" spellcheck="false" aria-describedby="tb-hint tb-error">
+          <p class="hint" id="tb-hint">Page numbers separated by spaces or commas, up to 60 references.</p>
+          <p class="error" id="tb-error" role="alert" hidden></p>
+          <div class="presets">
+            <button type="button" class="btn small" id="tb-preset-textbook">Textbook string</button>
+            <button type="button" class="btn small" id="tb-preset-belady">Belady's anomaly</button>
+            <button type="button" class="btn small" id="tb-preset-random">Random string</button>
+          </div>
+        </div>
+        <div class="field">
+          <label for="tb-frames">Frames</label>
+          <div class="stepper">
+            <button type="button" id="tb-frames-down" aria-label="One frame fewer">&minus;</button>
+            <input id="tb-frames" type="number" min="1" max="7" step="1" value="3" inputmode="numeric">
+            <button type="button" id="tb-frames-up" aria-label="One frame more">+</button>
+          </div>
+        </div>
+        <fieldset class="field span">
+          <legend class="flabel">Policy shown in the frame table</legend>
+          <div class="chips radio" id="tb-pols"></div>
+        </fieldset>
+      </form>
+
+      <h2 class="sec"><span class="no">01</span>Frame table</h2>
+      <p class="summary" id="tb-summary"></p>
+      <div class="scroll ft-box"><table class="ft" id="tb-table"></table></div>
+      <ul class="ft-key" aria-label="Key">
+        <li><span class="sw f">F</span>page fault</li>
+        <li><span class="sw new">7</span>page just loaded</li>
+        <li><span class="sw hit">7</span>hit: page already in a frame</li>
+        <li><span class="sw vic">7</span>in the victim row: page evicted</li>
+      </ul>
+
+      <h2 class="sec"><span class="no">02</span>Page faults of all 8 policies</h2>
+      <div class="panel">
+        <p class="cap">Same string, same number of frames. Tap a policy to show its frame table.</p>
+        <div class="plot" id="tb-bars"></div>
+      </div>
+      <p class="note" id="tb-belady" hidden></p>
+    </section>
+
+    <!-- RESULTS -->
+    <section class="view col" id="view-results" aria-labelledby="h-results" hidden>
+      <h1 id="h-results">Results from the Python run</h1>
+      <p class="lede" id="res-lede">Measured by the Python simulator on the unseen test traces. Nothing in this view is recomputed in the browser.</p>
+      <div class="hero" id="res-hero"></div>
+      <p id="res-headline"></p>
+
+      <h2 class="sec"><span class="no">01</span>Per workload</h2>
+      <p class="note">Fewer faults than LRU: mean over the memory sizes. Gap closed: (sum of LRU faults &minus; sum of policy faults) / (sum of LRU faults &minus; sum of OPT faults), pooled over the memory sizes.</p>
+      <div class="scroll"><table class="data" id="res-table"></table></div>
+
+      <h2 class="sec"><span class="no">02</span>Fault rate vs memory size</h2>
+      <p class="note">One chart per workload, each with its own scale from 0. OPT, dashed, is the lower bound.</p>
+      <ul class="legend" id="sm-legend"></ul>
+      <div class="sm-grid" id="sm-grid"></div>
+      <details>
+        <summary id="sm-table-summary">Table: fault rate (%) of every policy</summary>
+        <div class="scroll"><table class="data" id="sm-table"></table></div>
+      </details>
+
+      <h2 class="sec"><span class="no">03</span>Cost</h2>
+      <p class="note">Median time per page fault in the Python simulator, which times every fault. Compare policies with each other, not with a kernel.</p>
+      <div class="scroll"><table class="data" id="cost-table"></table></div>
+      <ul class="kv" id="cost-kv"></ul>
+    </section>
+
+    <!-- MODEL -->
+    <section class="view col" id="view-model" aria-labelledby="h-model" hidden>
+      <h1 id="h-model">How the learned policy decides</h1>
+      <p class="lede" id="model-lede">A logistic regression trained offline to imitate Belady's OPT. At every page fault it scores a few sampled resident pages and evicts the one least likely to be needed soon.</p>
+
+      <h2 class="sec"><span class="no">01</span>Pipeline</h2>
+      <div class="pipe" id="pipe"></div>
+      <ul class="kv" id="model-card"></ul>
+
+      <h2 class="sec"><span class="no">02</span>Feature weights</h2>
+      <p class="note">Positive weight: a larger value makes the page more likely to be evicted. Negative weight: a larger value keeps the page. Features are log-scaled, so the weights are comparable.</p>
+      <div class="panel">
+        <div class="plot" id="weights-chart"></div>
+      </div>
+      <details>
+        <summary id="weights-table-summary">Table: weights</summary>
+        <div class="scroll"><table class="data" id="weights-table"></table></div>
+      </details>
+
+      <h2 class="sec"><span class="no">03</span>Score a page</h2>
+      <p class="note">Describe one resident page at the moment of a page fault. A gap is the number of references between two uses of the page.</p>
+      <div class="presets" id="calc-presets">
+        <button type="button" class="btn small" id="calc-preset-hot">Hot page</button>
+        <button type="button" class="btn small" id="calc-preset-once">Used once, long ago</button>
+        <button type="button" class="btn small" id="calc-preset-overdue">Overdue</button>
+        <button type="button" class="btn small" id="calc-preset-loop">Loop page</button>
+      </div>
+      <form id="calc-form" class="calc-grid" novalidate style="margin-top:12px"></form>
+      <div class="score" id="calc-score" aria-live="polite"></div>
+      <div class="scroll"><table class="data" id="calc-table"></table></div>
+      <p class="hint" id="calc-hint"></p>
+
+      <h2 class="sec"><span class="no">04</span>Ablation</h2>
+      <p class="note">Validation faults relative to LRU (1.0 = LRU, lower is better). Feature variants run without the guard, so the model's own quality shows.</p>
+      <div class="panel">
+        <div class="plot" id="ablation-chart"></div>
+      </div>
+      <p id="ablation-finding"></p>
+      <details>
+        <summary id="ablation-table-summary">Table: ablation</summary>
+        <div class="scroll"><table class="data" id="ablation-table"></table></div>
+      </details>
+
+      <h2 class="sec"><span class="no">05</span>Parameter sweep</h2>
+      <fieldset>
+        <legend class="vh">Parameter</legend>
+        <div class="seg" id="sweep-param-seg"></div>
+      </fieldset>
+      <div class="panel">
+        <p class="cap" id="sweep-param-cap"></p>
+        <div class="plot" id="sweep-param-chart"></div>
+      </div>
+      <p id="sweep-finding"></p>
+      <div class="scroll"><table class="data" id="sweep-param-table"></table></div>
+    </section>
+  </main>
+
+  <footer class="col">
+    <p><b>ML Page Replacement</b>, a learned page replacement policy for operating system memory management.</p>
+    <ul class="team">
+      <li><b>Aryan Upadhyay</b> <code>24BCE2580</code></li>
+      <li><b>Saharsh Indurkar</b> <code>24BCE2527</code></li>
+      <li><b>Rajveer Singh Chopra</b> <code>24BCE0122</code></li>
+    </ul>
+    <p>Vellore Institute of Technology (VIT)</p>
+    <a href="https://github.com/rajveer-lab/mlpage" target="_blank" rel="noopener">Source on GitHub</a>
+    <a href="https://colab.research.google.com/github/rajveer-lab/mlpage/blob/main/notebooks/run_on_colab.ipynb" target="_blank" rel="noopener">Run the Python code in Colab</a>
+    <p class="hint" id="build-info"></p>
+  </footer>
+</div>
+<div id="tip" class="tip" role="status" hidden></div>
+<script src="data.js"></script><script src="engine.js"></script>
+<script>
+(function () {
+  "use strict";
+
+  var M = window.MLPR;
+  var D = window.MLPR_DATA || (M && typeof M.data === "function" ? M.data() : null);
+  var VIEWS = ["run", "textbook", "results", "model"];
+  var POLS = M ? M.POLICY_NAMES.slice() : ["FIFO", "LRU", "LFU", "CLOCK", "ARC", "LeCaR", "Learned", "OPT"];
+  var MARK = { Learned: "circle", LRU: "square", ARC: "triangle", LeCaR: "diamond", CLOCK: "tri-down", FIFO: "plus", LFU: "cross" };
+  var FRACTIONS = M ? M.MEMORY_FRACTIONS.slice() : [0.01, 0.02, 0.05, 0.1];
+  var LENGTHS = [20000, 50000, 100000];
+  var LOCKED = ["LRU", "OPT"];
+  var MINUS = "\u2212";
+  var DOT = " \u00b7 ";
+  var MU = "\u00b5s";
+
+  // ------------------------------------------------------------------ dom helpers
+  function $(sel, root) { return (root || document).querySelector(sel); }
+  function $$(sel, root) { return Array.prototype.slice.call((root || document).querySelectorAll(sel)); }
+  function append(parent, kids) {
+    (Array.isArray(kids) ? kids : [kids]).forEach(function (k) {
+      if (k === null || k === undefined || k === false) return;
+      parent.appendChild(typeof k === "string" || typeof k === "number" ? document.createTextNode(String(k)) : k);
+    });
+    return parent;
+  }
+  function el(tag, props, kids) {
+    var e = document.createElement(tag);
+    if (props) {
+      Object.keys(props).forEach(function (k) {
+        var v = props[k];
+        if (v === null || v === undefined || v === false) return;
+        if (k === "class") e.className = v;
+        else if (k === "text") e.textContent = v;
+        else if (k.slice(0, 2) === "on" && typeof v === "function") e.addEventListener(k.slice(2), v);
+        else e.setAttribute(k, v === true ? "" : String(v));
+      });
+    }
+    if (kids !== undefined && kids !== null) append(e, kids);
+    return e;
+  }
+  var SVGNS = "http://www.w3.org/2000/svg";
+  function sv(tag, attrs, parent) {
+    var e = document.createElementNS(SVGNS, tag);
+    if (attrs) Object.keys(attrs).forEach(function (k) { if (attrs[k] !== null && attrs[k] !== undefined) e.setAttribute(k, String(attrs[k])); });
+    if (parent) parent.appendChild(e);
+    return e;
+  }
+  function r1(v) { return Math.round(v * 10) / 10; }
+  function stext(parent, x, y, str, cls, anchor) {
+    var t = sv("text", { x: r1(x), y: r1(y), class: cls, "text-anchor": anchor || "start" }, parent);
+    t.textContent = str;
+    return t;
+  }
+  function store(key, value) { try { window.localStorage.setItem(key, JSON.stringify(value)); } catch (e) { /* storage is optional */ } }
+  function recall(key) { try { var v = window.localStorage.getItem(key); return v ? JSON.parse(v) : null; } catch (e) { return null; } }
+
+  // ------------------------------------------------------------------ number formats
+  var NF = new Intl.NumberFormat("en-US");
+  function fmtInt(n) { return NF.format(n); }
+  function fmtNum(v, d) {
+    if (typeof v !== "number" || !isFinite(v)) return "n/a";
+    var s = Math.abs(v).toFixed(d);
+    return (v < 0 && Number(s) !== 0 ? MINUS : "") + s;
+  }
+  function fmtPct(v, d) { return typeof v === "number" && isFinite(v) ? fmtNum(v, d === undefined ? 1 : d) + "%" : "n/a"; }
+  function fracLabel(f) { return fmtNum(f * 100, 0) + "%"; }
+  function mean(a) { return a.length ? a.reduce(function (s, v) { return s + v; }, 0) / a.length : NaN; }
+  function median(a) {
+    if (!a.length) return NaN;
+    var s = a.slice().sort(function (x, y) { return x - y; });
+    var m = s.length >> 1;
+    return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2;
+  }
+
+  // ------------------------------------------------------------------ text measuring
+  var mctx = null;
+  try { mctx = document.createElement("canvas").getContext("2d"); } catch (e) { mctx = null; }
+  var FONT_UI = "sans-serif", FONT_DATA = "monospace";
+  function readFonts() {
+    var cs = getComputedStyle(document.documentElement);
+    FONT_UI = cs.getPropertyValue("--font-ui").trim() || FONT_UI;
+    FONT_DATA = cs.getPropertyValue("--font-data").trim() || FONT_DATA;
+  }
+  function textW(str, px, fam, weight) {
+    if (!mctx) return String(str).length * px * 0.62;
+    mctx.font = (weight || 400) + " " + px + "px " + (fam === "data" ? FONT_DATA : FONT_UI);
+    return mctx.measureText(String(str)).width;
+  }
+  function maxW(list, px, fam, weight) { return list.reduce(function (m, s) { return Math.max(m, textW(s, px, fam, weight)); }, 0); }
+
+  // ------------------------------------------------------------------ scales
+  function niceStep(span, count) {
+    var raw = span / Math.max(1, count);
+    var mag = Math.pow(10, Math.floor(Math.log10(raw)));
+    var n = raw / mag;
+    return (n <= 1 ? 1 : n <= 2 ? 2 : n <= 2.5 ? 2.5 : n <= 5 ? 5 : 10) * mag;
+  }
+  function niceDomain(max, count) {
+    if (!(max > 0)) return { max: 1, step: 0.25 };
+    var step = niceStep(max, count);
+    return { max: Math.ceil(max / step - 1e-9) * step, step: step };
+  }
+  function tickList(max, step) {
+    var out = [];
+    for (var i = 0; i * step <= max + step * 1e-6; i++) out.push(+(i * step).toFixed(10));
+    return out;
+  }
+  function decimalsFor(step) {
+    for (var d = 0; d < 4; d++) { var m = step * Math.pow(10, d); if (Math.abs(m - Math.round(m)) < 1e-9) return d; }
+    return 4;
+  }
+
+  // ------------------------------------------------------------------ charts: registry
+  var charts = [];
+  var ro = null;
+  function paint(c, force) {
+    var w = Math.floor(c.host.clientWidth);
+    if (w < 60) return;
+    if (!force && w === c.w) return;
+    c.w = w;
+    if (tipOwnerHost === c.host) hideTip();
+    c.draw(w);
+  }
+  if ("ResizeObserver" in window) {
+    ro = new ResizeObserver(function (entries) {
+      window.requestAnimationFrame(function () {
+        entries.forEach(function (en) { if (en.target.__chart) paint(en.target.__chart); });
+      });
+    });
+  }
+  function chart(host, draw) {
+    var c = host.__chart;
+    if (!c) {
+      c = host.__chart = { host: host, draw: draw, w: 0 };
+      charts.push(c);
+      if (ro) ro.observe(host);
+    }
+    c.draw = draw;
+    paint(c, true);
+  }
+  function repaintAll(force) { charts.forEach(function (c) { paint(c, force); }); }
+  window.addEventListener("resize", function () { repaintAll(false); });
+
+  // ------------------------------------------------------------------ tooltip
+  var tip = $("#tip");
+  var tipOwner = null, tipOwnerHost = null, tipOnHide = null;
+  function showTip(owner, host, ax, ay, build, onHide) {
+    if (tipOwner && tipOwner !== owner && tipOnHide) tipOnHide();
+    tipOwner = owner; tipOwnerHost = host; tipOnHide = onHide || null;
+    tip.textContent = "";
+    build(tip);
+    tip.hidden = false;
+    var vw = document.documentElement.clientWidth, vh = window.innerHeight;
+    var r = tip.getBoundingClientRect();
+    var x = Math.max(8, Math.min(vw - r.width - 8, ax - r.width / 2));
+    var y = ay - r.height - 14;
+    var minTop = 54;
+    if (y < minTop) y = ay + 18;
+    y = Math.max(8, Math.min(vh - r.height - 8, y));
+    tip.style.transform = "translate(" + Math.round(x) + "px," + Math.round(y) + "px)";
+  }
+  function hideTip(owner) {
+    if (owner && owner !== tipOwner) return;
+    var cb = tipOnHide;
+    tipOwner = null; tipOwnerHost = null; tipOnHide = null;
+    tip.hidden = true;
+    if (cb) cb();
+  }
+  document.addEventListener("pointerdown", function (e) {
+    if (!tipOwner) return;
+    var t = e.target;
+    if (t && t.closest && t.closest("[data-tip]")) return;
+    hideTip();
+  }, true);
+  window.addEventListener("scroll", function () { if (tipOwner) hideTip(); }, { passive: true });
+  document.addEventListener("keydown", function (e) { if (e.key === "Escape" && tipOwner) hideTip(); });
+
+  function keySvg(pol, kind) {
+    var s = sv("svg", { class: "key pol-" + pol, viewBox: "0 0 24 12", width: 24, height: 12, "aria-hidden": "true" });
+    if (kind === "bar") {
+      var rect = sv("rect", { x: 2, y: 1.5, width: 20, height: 9, rx: 2, class: "s-bar" + (pol === "OPT" ? " ref" : "") }, s);
+      if (pol === "OPT") rect.setAttribute("style", "fill: var(--sheet)");
+    } else if (kind === "pole") {
+      sv("rect", { x: 2, y: 1.5, width: 20, height: 9, rx: 2, class: "s-bar" }, s);
+    } else {
+      sv("line", { x1: 1, y1: 6, x2: 23, y2: 6, class: "s-line" + (pol === "OPT" ? " ref" : "") }, s);
+      if (MARK[pol]) marker(s, MARK[pol], 12, 6, 9);
+    }
+    return s;
+  }
+  function tipTitle(t, text) { t.appendChild(el("div", { class: "tip-t", text: text })); }
+  function tipRow(t, pol, kind, value, name) { t.appendChild(el("div", { class: "tip-r" }, [keySvg(pol, kind), el("b", { text: value }), el("span", { text: name })])); }
+  function tipLine(t, label, value) { t.appendChild(el("div", { class: "tip-l" }, [label + " ", el("b", { text: value })])); }
+
+  // ------------------------------------------------------------------ marks
+  function pts(list) { return list.map(function (p) { return r1(p[0]) + "," + r1(p[1]); }).join(" "); }
+  function marker(parent, shape, x, y, size, cls) {
+    var s = (size || 9) / 2, e;
+    if (shape === "circle") e = sv("circle", { cx: r1(x), cy: r1(y), r: s });
+    else if (shape === "square") e = sv("rect", { x: r1(x - s * 0.9), y: r1(y - s * 0.9), width: r1(s * 1.8), height: r1(s * 1.8) });
+    else if (shape === "triangle") e = sv("polygon", { points: pts([[x, y - s * 1.2], [x + s * 1.15, y + s * 0.85], [x - s * 1.15, y + s * 0.85]]) });
+    else if (shape === "tri-down") e = sv("polygon", { points: pts([[x, y + s * 1.2], [x + s * 1.15, y - s * 0.85], [x - s * 1.15, y - s * 0.85]]) });
+    else if (shape === "diamond") e = sv("polygon", { points: pts([[x, y - s * 1.3], [x + s * 1.05, y], [x, y + s * 1.3], [x - s * 1.05, y]]) });
+    else {
+      var a = s * 1.2, b = s * 0.45;
+      var p = [[-b, -a], [b, -a], [b, -b], [a, -b], [a, b], [b, b], [b, a], [-b, a], [-b, b], [-a, b], [-a, -b], [-b, -b]];
+      if (shape === "cross") p = p.map(function (q) { return [(q[0] - q[1]) * Math.SQRT1_2, (q[0] + q[1]) * Math.SQRT1_2]; });
+      e = sv("polygon", { points: pts(p.map(function (q) { return [x + q[0], y + q[1]]; })) });
+    }
+    e.setAttribute("class", "s-mark" + (cls ? " " + cls : ""));
+    parent.appendChild(e);
+    return e;
+  }
+  var uid = 0;
+  function hatchDefs(svgEl) {
+    var id = "mlpr-hatch-" + (++uid);
+    var defs = sv("defs", null, svgEl);
+    var p = sv("pattern", { id: id, width: 6, height: 6, patternUnits: "userSpaceOnUse", patternTransform: "rotate(45)" }, defs);
+    sv("rect", { width: 6, height: 6, class: "s-hatch-bg" }, p);
+    sv("line", { x1: 1, y1: 0, x2: 1, y2: 6, class: "s-hatch" }, p);
+    return id;
+  }
+  // Horizontal bar from x0 to x1, rounded (radius r) at the data end x1 only.
+  function barPath(x0, x1, y, h, r) {
+    var len = Math.abs(x1 - x0);
+    if (len < 0.5) return "";
+    r = Math.min(r, h / 2, len);
+    var dir = x1 >= x0 ? 1 : -1, xe = x1 - dir * r, sw = dir > 0 ? 1 : 0;
+    return "M" + r1(x0) + "," + r1(y) + "H" + r1(xe) + "A" + r + "," + r + " 0 0 " + sw + " " + r1(x1) + "," + r1(y + r) +
+      "V" + r1(y + h - r) + "A" + r + "," + r + " 0 0 " + sw + " " + r1(xe) + "," + r1(y + h) + "H" + r1(x0) + "Z";
+  }
+  function svgRoot(w, h, label) {
+    return sv("svg", { width: w, height: h, viewBox: "0 0 " + w + " " + h, role: "img", "aria-label": label, focusable: "false" });
+  }
+  function bindTip(node, host, anchor, build) {
+    function show() {
+      var a = anchor();
+      node.classList.add("on");
+      showTip(node, host, a.x, a.y, build, function () { node.classList.remove("on"); });
+    }
+    node.addEventListener("pointerenter", function (e) { if (e.pointerType === "mouse") show(); });
+    node.addEventListener("pointerleave", function (e) { if (e.pointerType === "mouse") hideTip(node); });
+    node.addEventListener("pointerdown", function (e) { if (e.pointerType !== "mouse") show(); });
+    node.addEventListener("focus", show);
+    node.addEventListener("blur", function () { hideTip(node); });
+  }
+
+  // ------------------------------------------------------------------ chart: horizontal bars
+  // rows: [{key, label, value, ref, selected, aria, tip(t)}]
+  function drawBars(host, w, cfg) {
+    host.textContent = "";
+    var rows = cfg.rows;
+    var band = cfg.band || 32, barH = Math.min(cfg.barH || 18, band - 6);
+    var labelW = Math.ceil(Math.min(w * 0.4, maxW(rows.map(function (r) { return r.label; }), 12.5, cfg.monoLabels ? "data" : "ui", 500))) + 12;
+    var valW = Math.ceil(maxW(rows.map(function (r) { return cfg.fmt(r.value); }), 11.5, "data", 500)) + 12;
+    var x0 = labelW, x1 = w - valW;
+    var vmax = rows.reduce(function (m, r) { return Math.max(m, r.value); }, cfg.refLine ? cfg.refLine.value : 0);
+    var nt = Math.max(2, Math.floor((x1 - x0) / 58));
+    var dom = cfg.domainMax ? { max: cfg.domainMax, step: niceStep(cfg.domainMax, nt) } : niceDomain(vmax, nt);
+    function X(v) { return x0 + (Math.max(0, v) / dom.max) * (x1 - x0); }
+    var top = cfg.refLine ? 22 : 6, plotH = rows.length * band, H = top + plotH + 24;
+    var s = svgRoot(w, H, cfg.aria);
+    var hatch = hatchDefs(s);
+    tickList(dom.max, dom.step).forEach(function (t) {
+      var x = X(t);
+      sv("line", { x1: r1(x), y1: top, x2: r1(x), y2: top + plotH, class: t === 0 ? "s-axis" : "s-grid" }, s);
+      stext(s, x, top + plotH + 16, cfg.tickFmt(t, dom.step), "s-tick", "middle");
+    });
+    if (cfg.refLine) {
+      var xr = X(cfg.refLine.value);
+      sv("line", { x1: r1(xr), y1: top - 6, x2: r1(xr), y2: top + plotH, class: "s-refline" }, s);
+      stext(s, xr, top - 10, cfg.refLine.label, "s-note halo", "middle");
+    }
+    rows.forEach(function (r, i) {
+      var y = top + i * band, yb = y + (band - barH) / 2;
+      var g = sv("g", { class: "bar-row pol-" + r.key + (r.selected ? " sel" : ""), tabindex: 0, "data-tip": "", "data-policy": r.key, "data-value": r.value, role: cfg.onSelect ? "button" : "img", "aria-label": r.aria }, s);
+      sv("rect", { x: 0, y: y, width: w, height: band, class: "s-hit" }, g);
+      if (r.selected) sv("rect", { x: 0, y: y + 1, width: x0 - 2, height: band - 2, class: "s-sel" }, g);
+      stext(g, x0 - 8, y + band / 2 + 4.5, r.label, "s-label" + (cfg.monoLabels ? " mono" : ""), "end");
+      var d = barPath(X(0), X(r.value), yb, barH, 4);
+      if (d) {
+        var p = sv("path", { d: d, class: "s-bar" + (r.ref ? " ref" : "") }, g);
+        if (r.ref) p.setAttribute("style", "fill: url(#" + hatch + ")");
+      }
+      stext(g, X(r.value) + 6, y + band / 2 + 4, cfg.fmt(r.value), "s-val");
+      bindTip(g, host, function () {
+        var b = s.getBoundingClientRect();
+        return { x: b.left + X(r.value), y: b.top + yb };
+      }, function (t) { r.tip(t); });
+      if (cfg.onSelect) {
+        g.addEventListener("click", function () { cfg.onSelect(r.key); });
+        g.addEventListener("keydown", function (e) { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); cfg.onSelect(r.key); } });
+      }
+    });
+    host.appendChild(s);
+  }
+
+  // ------------------------------------------------------------------ chart: lines with crosshair
+  // xs: [{pos, label, sub}], series: [{key, name, values, ref}]
+  function drawLines(host, w, cfg) {
+    host.textContent = "";
+    var H = cfg.height || 220;
+    var vmax = 0;
+    cfg.series.forEach(function (se) { se.values.forEach(function (v) { if (isFinite(v) && v > vmax) vmax = v; }); });
+    if (cfg.refValue) vmax = Math.max(vmax, cfg.refValue);
+    var dom = niceDomain(vmax, cfg.yTicks || 4);
+    var ty = tickList(dom.max, dom.step);
+    var left = Math.ceil(maxW(ty.map(function (t) { return cfg.yFmt(t, dom.step); }), 11, "data")) + 8;
+    var right = w - (cfg.padRight || 8);
+    var top = cfg.padTop || 10;
+    var bottom = H - (cfg.xSub ? 34 : 21);
+    var pos = cfg.xs.map(function (x) { return x.pos; });
+    var pmin = Math.min.apply(null, pos), pmax = Math.max.apply(null, pos);
+    var inset = cfg.inset === undefined ? 14 : cfg.inset;
+    var lastW = Math.max(textW(cfg.xs[cfg.xs.length - 1].label, 11, "data"), cfg.xSub ? textW(cfg.xs[cfg.xs.length - 1].sub || "", 11, "data") : 0);
+    var insetR = Math.max(inset, Math.ceil(lastW / 2) + 2 - (w - right));
+    function X(p) { return pmax === pmin ? (left + right) / 2 : left + inset + ((p - pmin) / (pmax - pmin)) * (right - left - inset - insetR); }
+    function Y(v) { return bottom - (v / dom.max) * (bottom - top); }
+    var s = svgRoot(w, H, cfg.aria);
+    ty.forEach(function (t) {
+      sv("line", { x1: left, y1: r1(Y(t)), x2: right, y2: r1(Y(t)), class: t === 0 ? "s-axis" : "s-grid" }, s);
+      stext(s, left - 6, Y(t) + 3.8, cfg.yFmt(t, dom.step), "s-tick", "end");
+    });
+    cfg.xs.forEach(function (x) {
+      stext(s, X(x.pos), bottom + 15, x.label, "s-tick", "middle");
+      if (cfg.xSub) stext(s, X(x.pos), bottom + 28, x.sub, "s-tick", "middle");
+    });
+    if (cfg.refValue) {
+      var yr = Y(cfg.refValue);
+      sv("line", { x1: left, y1: r1(yr), x2: right, y2: r1(yr), class: "s-refline" }, s);
+      stext(s, right - 2, yr - 5, cfg.refLabel, "s-note halo", "end");
+    }
+    var order = cfg.series.slice().sort(function (a, b) { return (a.ref ? 0 : a.key === "Learned" ? 2 : 1) - (b.ref ? 0 : b.key === "Learned" ? 2 : 1); });
+    order.forEach(function (se) {
+      var g = sv("g", { class: "pol-" + se.key }, s);
+      var d = "";
+      se.values.forEach(function (v, i) {
+        if (!isFinite(v)) return;
+        d += (d ? "L" : "M") + r1(X(cfg.xs[i].pos)) + "," + r1(Y(v));
+      });
+      sv("path", { d: d, class: "s-line" + (se.ref ? " ref" : "") }, g);
+      if (!se.ref) se.values.forEach(function (v, i) { if (isFinite(v)) marker(g, MARK[se.key] || "circle", X(cfg.xs[i].pos), Y(v), 9); });
+    });
+    if (cfg.mark) {
+      var mv = cfg.series[0].values[cfg.mark.index], mx = X(cfg.xs[cfg.mark.index].pos);
+      sv("circle", { cx: r1(mx), cy: r1(Y(mv)), r: 8.5, class: "s-ring" }, s);
+      stext(s, mx, Y(mv) + 22, cfg.mark.label, "s-note halo", "middle");
+    }
+    var cross = sv("line", { x1: 0, x2: 0, y1: top, y2: bottom, class: "s-cross", visibility: "hidden" }, s);
+    var hl = sv("g", { class: "s-hl" }, s);
+    var ov = sv("rect", { x: 0, y: 0, width: w, height: H, class: "s-hit s-ov", tabindex: 0, "data-tip": "", role: "img", "aria-label": cfg.aria + ". Arrow keys read the values." }, s);
+    var cur = -1;
+    function clearMarks() { cur = -1; cross.setAttribute("visibility", "hidden"); hl.textContent = ""; }
+    function set(i) {
+      cur = i;
+      var x = X(cfg.xs[i].pos);
+      cross.setAttribute("x1", r1(x)); cross.setAttribute("x2", r1(x)); cross.setAttribute("visibility", "visible");
+      hl.textContent = "";
+      var ymin = bottom;
+      cfg.series.forEach(function (se) {
+        var v = se.values[i];
+        if (!isFinite(v)) return;
+        var y = Y(v); ymin = Math.min(ymin, y);
+        var g = sv("g", { class: "pol-" + se.key }, hl);
+        if (se.ref) sv("circle", { cx: r1(x), cy: r1(y), r: 4, class: "s-mark ref" }, g);
+        else marker(g, MARK[se.key] || "circle", x, y, 12);
+      });
+      var b = s.getBoundingClientRect();
+      showTip(ov, host, b.left + x, b.top + ymin, function (t) {
+        tipTitle(t, cfg.tipTitle(i));
+        cfg.series.filter(function (se) { return isFinite(se.values[i]); })
+          .sort(function (a, b2) { return a.values[i] - b2.values[i]; })
+          .forEach(function (se) { tipRow(t, se.key, "line", cfg.tipFmt(se.values[i]), se.name); });
+        if (cfg.tipExtra) cfg.tipExtra(t, i);
+      }, clearMarks);
+    }
+    function nearest(e) {
+      var b = s.getBoundingClientRect(), px = e.clientX - b.left, best = 0, bd = Infinity;
+      cfg.xs.forEach(function (x, i) { var dd = Math.abs(X(x.pos) - px); if (dd < bd) { bd = dd; best = i; } });
+      return best;
+    }
+    ov.addEventListener("pointermove", function (e) { if (e.pointerType === "mouse" || cur >= 0) { var i = nearest(e); if (i !== cur) set(i); } });
+    ov.addEventListener("pointerdown", function (e) { set(nearest(e)); });
+    ov.addEventListener("pointerleave", function (e) { if (e.pointerType === "mouse") hideTip(ov); });
+    ov.addEventListener("focus", function () { if (cur < 0) set(0); });
+    ov.addEventListener("blur", function () { hideTip(ov); });
+    ov.addEventListener("keydown", function (e) {
+      var n = cfg.xs.length;
+      if (e.key === "ArrowRight" || e.key === "ArrowLeft") {
+        e.preventDefault();
+        set(cur < 0 ? 0 : (cur + (e.key === "ArrowRight" ? 1 : n - 1)) % n);
+      }
+    });
+    host.appendChild(s);
+  }
+
+  // ------------------------------------------------------------------ chart: diverging bars
+  function drawDiverging(host, w, cfg) {
+    host.textContent = "";
+    var rows = cfg.rows, stacked = w < 560;
+    var band = stacked ? 42 : 32, barH = stacked ? 14 : 16;
+    var labelW = stacked ? 0 : Math.ceil(Math.min(w * 0.38, maxW(rows.map(function (r) { return r.label; }), 12, "data", 500))) + 12;
+    var valW = Math.ceil(maxW(rows.map(function (r) { return cfg.fmt(r.value); }), 11.5, "data", 500)) + 14;
+    var x0 = labelW + (stacked ? 4 : 0), x1 = w - valW, xm = (x0 + x1) / 2, half = (x1 - x0) / 2;
+    var amax = rows.reduce(function (m, r) { return Math.max(m, Math.abs(r.value)); }, 0);
+    var dom = niceDomain(amax, Math.max(1, Math.floor(half / 40)));
+    function X(v) { return xm + (v / dom.max) * half; }
+    var top = 24, plotH = rows.length * band, H = top + plotH + 24;
+    var s = svgRoot(w, H, cfg.aria);
+    stext(s, xm - 8, 13, "\u2190 " + cfg.negLabel, "s-note", "end");
+    stext(s, xm + 8, 13, cfg.posLabel + " \u2192", "s-note", "start");
+    tickList(dom.max, dom.step).forEach(function (t) {
+      [t, -t].forEach(function (v, j) {
+        if (j === 1 && t === 0) return;
+        sv("line", { x1: r1(X(v)), y1: top, x2: r1(X(v)), y2: top + plotH, class: v === 0 ? "s-axis" : "s-grid" }, s);
+        stext(s, X(v), top + plotH + 16, fmtNum(v, decimalsFor(dom.step)), "s-tick", "middle");
+      });
+    });
+    rows.forEach(function (r, i) {
+      var y = top + i * band, yb = stacked ? y + band - barH - 5 : y + (band - barH) / 2;
+      var g = sv("g", { class: "bar-row " + (r.value >= 0 ? "pole-evict" : "pole-keep"), tabindex: 0, "data-tip": "", role: "img", "aria-label": r.label + " weight " + cfg.fmt(r.value) }, s);
+      sv("rect", { x: 0, y: y, width: w, height: band, class: "s-hit" }, g);
+      if (stacked) stext(g, r.value >= 0 ? xm - 6 : xm + 6, y + 14, r.label, "s-label mono halo", r.value >= 0 ? "end" : "start");
+      else stext(g, x0 - 8, y + band / 2 + 4.5, r.label, "s-label mono", "end");
+      var d = barPath(X(0), X(r.value), yb, barH, 4);
+      if (d) sv("path", { d: d, class: "s-bar" }, g);
+      else sv("line", { x1: r1(X(0)), x2: r1(X(0)), y1: yb, y2: yb + barH, class: "s-axis" }, g);
+      stext(g, w - 2, yb + barH / 2 + 4, cfg.fmt(r.value), "s-val", "end");
+      bindTip(g, host, function () { var b = s.getBoundingClientRect(); return { x: b.left + X(r.value), y: b.top + yb }; }, function (t) { r.tip(t); });
+    });
+    host.appendChild(s);
+  }
+
+  // ------------------------------------------------------------------ chart: bars with the label above (long labels)
+  function drawLabelledBars(host, w, cfg) {
+    host.textContent = "";
+    var rowH = 40, barH = 12, groupH = 26;
+    var valW = Math.ceil(maxW(cfg.groups.reduce(function (a, g) { return a.concat(g.rows.map(function (r) { return cfg.fmt(r.value); })); }, []), 11.5, "data", 500)) + 12;
+    var x0 = 2, x1 = w - valW;
+    var vmax = cfg.groups.reduce(function (m, g) { return g.rows.reduce(function (m2, r) { return Math.max(m2, r.value); }, m); }, cfg.ref.value);
+    var dom = niceDomain(vmax, Math.max(2, Math.floor((x1 - x0) / 60)));
+    function X(v) { return x0 + (v / dom.max) * (x1 - x0); }
+    var top = 20, plotH = cfg.groups.reduce(function (h, g) { return h + groupH + g.rows.length * rowH; }, 0);
+    var H = top + plotH + 24;
+    var s = svgRoot(w, H, cfg.aria);
+    tickList(dom.max, dom.step).forEach(function (t) {
+      sv("line", { x1: r1(X(t)), y1: top, x2: r1(X(t)), y2: top + plotH, class: t === 0 ? "s-axis" : "s-grid" }, s);
+      stext(s, X(t), top + plotH + 16, fmtNum(t, decimalsFor(dom.step)), "s-tick", t === 0 ? "start" : "middle");
+    });
+    var xr = X(cfg.ref.value);
+    sv("line", { x1: r1(xr), y1: top - 6, x2: r1(xr), y2: top + plotH, class: "s-refline" }, s);
+    stext(s, xr, top - 9, cfg.ref.label, "s-note halo", "middle");
+    var y = top;
+    cfg.groups.forEach(function (gr) {
+      stext(s, x0, y + 17, gr.title.toUpperCase(), "s-gt halo");
+      y += groupH;
+      gr.rows.forEach(function (r) {
+        var yb = y + 20;
+        var g = sv("g", { class: "bar-row pol-Learned", tabindex: 0, "data-tip": "", role: "img", "aria-label": r.label + ": " + cfg.fmt(r.value) }, s);
+        sv("rect", { x: 0, y: y, width: w, height: rowH, class: "s-hit" }, g);
+        stext(g, x0, y + 14, r.label, "s-label halo");
+        var d = barPath(X(0), X(r.value), yb, barH, 4);
+        if (d) sv("path", { d: d, class: "s-bar" }, g);
+        stext(g, X(r.value) + 6, yb + barH - 1.5, cfg.fmt(r.value), "s-val");
+        bindTip(g, host, function () { var b = s.getBoundingClientRect(); return { x: b.left + X(r.value), y: b.top + yb }; }, function (t) { r.tip(t); });
+        y += rowH;
+      });
+    });
+    host.appendChild(s);
+  }
+
+  function legend(ul, pols, kind) {
+    ul.textContent = "";
+    pols.forEach(function (p) {
+      ul.appendChild(el("li", null, [keySvg(p, kind), p === "OPT" ? "OPT (lower bound)" : p]));
+    });
+  }
+  function pcell(pol, kind) { return el("span", { class: "pcell" }, [keySvg(pol, kind || "bar"), pol]); }
+  function tableFrom(table, head, rows, opts) {
+    table.textContent = "";
+    if (opts && opts.caption) table.appendChild(el("caption", { class: "vh", text: opts.caption }));
+    var thead = el("thead");
+    if (opts && opts.groups) {
+      var gtr = el("tr", { class: "grp" });
+      opts.groups.forEach(function (g) { gtr.appendChild(el("th", { colspan: g.span, scope: g.text ? "colgroup" : null, text: g.text })); });
+      thead.appendChild(gtr);
+    }
+    var tr = el("tr");
+    head.forEach(function (h) { tr.appendChild(el("th", { scope: "col" }, h)); });
+    thead.appendChild(tr);
+    table.appendChild(thead);
+    var tb = el("tbody");
+    rows.forEach(function (row) {
+      var r = el("tr", row.cls ? { class: row.cls } : null);
+      row.cells.forEach(function (c) {
+        if (c && typeof c === "object" && !(c instanceof Node)) r.appendChild(el("td", { class: c.cls || null }, c.v));
+        else r.appendChild(el("td", null, c));
+      });
+      tb.appendChild(r);
+    });
+    table.appendChild(tb);
+  }
+
+  // ------------------------------------------------------------------ fatal guard
+  function fatal(msg) {
+    var f = $("#fatal");
+    f.hidden = false;
+    f.textContent = msg;
+  }
+
+  // ================================================================== views
+  var state = {
+    view: "run",
+    busy: false,
+    cancel: false,
+    run: { workload: "bfs", fraction: 0.05, length: 20000, policies: POLS.slice() },
+    last: null,
+    tb: { refs: null, frames: 3, policy: "LRU" },
+    sweepParam: "k"
+  };
+
+  function showView(name) {
+    if (VIEWS.indexOf(name) < 0) name = "run";
+    state.view = name;
+    VIEWS.forEach(function (v) { $("#view-" + v).hidden = v !== name; });
+    $$(".tabs a").forEach(function (a) {
+      if (a.getAttribute("data-view") === name) a.setAttribute("aria-current", "page");
+      else a.removeAttribute("aria-current");
+    });
+    hideTip();
+    if (!ro) window.setTimeout(function () { repaintAll(false); }, 0);
+  }
+  window.addEventListener("hashchange", function () {
+    var h = location.hash.replace(/^#/, "");
+    if (VIEWS.indexOf(h) >= 0) { showView(h); window.scrollTo(0, 0); }
+  });
+
+  // ------------------------------------------------------------------ theme
+  var THEMES = ["auto", "light", "dark"];
+  var THEME_LABEL = { auto: "Auto", light: "Light", dark: "Dark" };
+  function applyTheme(t, save) {
+    if (THEMES.indexOf(t) < 0) t = "auto";
+    if (t === "auto") document.documentElement.removeAttribute("data-theme");
+    else document.documentElement.setAttribute("data-theme", t);
+    var b = $("#theme-btn");
+    b.textContent = THEME_LABEL[t];
+    b.setAttribute("aria-label", "Colour theme: " + (t === "auto" ? "automatic" : t) + ". Change theme");
+    b.setAttribute("data-theme-choice", t);
+    if (save) store("mlpr.theme", t);
+  }
+
+  // ================================================================== RUN
+  var traceCache = [];
+  function getTrace(name, length) {
+    for (var i = 0; i < traceCache.length; i++) if (traceCache[i].name === name && traceCache[i].length === length) return traceCache[i];
+    var w = M.WORKLOADS.filter(function (x) { return x.name === name; })[0];
+    var trace = w.build({ length: length });
+    var entry = { name: name, length: length, trace: trace, distinct: new Set(trace).size };
+    traceCache.unshift(entry);
+    if (traceCache.length > 4) traceCache.pop();
+    return entry;
+  }
+  function workloadInfo(name) { return M ? M.WORKLOADS.filter(function (x) { return x.name === name; })[0] : null; }
+
+  function buildRunControls() {
+    var grid = $("#wl-grid");
+    M.WORKLOADS.forEach(function (w) {
+      var id = "wl-" + w.name;
+      grid.appendChild(el("div", { class: "opt" }, [
+        el("input", { type: "radio", name: "workload", id: id, value: w.name }),
+        el("label", { for: id, class: "wl" }, [el("span", { class: "nm", text: w.name }), el("span", { class: "kd", text: w.kind }), el("span", { class: "ds", text: w.tests })])
+      ]));
+    });
+    var mem = $("#mem-seg");
+    FRACTIONS.forEach(function (f) {
+      var id = "mem-" + Math.round(f * 100);
+      mem.appendChild(el("div", { class: "opt" }, [
+        el("input", { type: "radio", name: "memory", id: id, value: String(f) }),
+        el("label", { for: id }, [fracLabel(f), el("small", { id: id + "-frames", text: "\u00a0" })])
+      ]));
+    });
+    var len = $("#len-seg");
+    LENGTHS.forEach(function (n) {
+      var id = "len-" + n;
+      len.appendChild(el("div", { class: "opt" }, [
+        el("input", { type: "radio", name: "length", id: id, value: String(n) }),
+        el("label", { for: id }, [fmtInt(n), el("small", { text: "references" })])
+      ]));
+    });
+    var chips = $("#pol-chips");
+    POLS.forEach(function (p) {
+      var id = "pol-" + p, locked = LOCKED.indexOf(p) >= 0;
+      chips.appendChild(el("div", { class: "opt" }, [
+        el("input", { type: "checkbox", id: id, value: p, checked: true, disabled: locked }),
+        el("label", { for: id, class: "chip pchip pol-" + p }, [p, locked ? el("span", { class: "lock", text: "always" }) : null])
+      ]));
+    });
+    var saved = recall("mlpr.run");
+    if (saved && typeof saved === "object") {
+      if (workloadInfo(saved.workload)) state.run.workload = saved.workload;
+      if (FRACTIONS.indexOf(saved.fraction) >= 0) state.run.fraction = saved.fraction;
+      if (LENGTHS.indexOf(saved.length) >= 0) state.run.length = saved.length;
+      if (Array.isArray(saved.policies)) state.run.policies = POLS.filter(function (p) { return LOCKED.indexOf(p) >= 0 || saved.policies.indexOf(p) >= 0; });
+    }
+    $("#wl-" + state.run.workload).checked = true;
+    $("#mem-" + Math.round(state.run.fraction * 100)).checked = true;
+    $("#len-" + state.run.length).checked = true;
+    POLS.forEach(function (p) { $("#pol-" + p).checked = state.run.policies.indexOf(p) >= 0; });
+
+    $("#run-fields").addEventListener("change", function () { readRunConfig(); updateFrameHints(); store("mlpr.run", state.run); });
+    $("#run-form").addEventListener("submit", function (e) { e.preventDefault(); runSimulation(false); });
+    $("#sweep-btn").addEventListener("click", function () { runSweep(); });
+    $("#stop-btn").addEventListener("click", function () { state.cancel = true; status("Stopping after the current policy\u2026"); });
+    $("#to-output").addEventListener("click", function () { scrollToEl($("#run-output")); });
+  }
+  function readRunConfig() {
+    var w = $("input[name=workload]:checked"), m = $("input[name=memory]:checked"), l = $("input[name=length]:checked");
+    state.run.workload = w ? w.value : "bfs";
+    state.run.fraction = m ? Number(m.value) : 0.05;
+    state.run.length = l ? Number(l.value) : 20000;
+    state.run.policies = POLS.filter(function (p) { var c = $("#pol-" + p); return c && c.checked; });
+    return state.run;
+  }
+  function updateFrameHints() {
+    try {
+      var tr = getTrace(state.run.workload, state.run.length);
+      FRACTIONS.forEach(function (f) {
+        var n = M.framesFor(tr.trace, f);
+        $("#mem-" + Math.round(f * 100) + "-frames").textContent = n + " frames";
+      });
+    } catch (e) { /* hints are optional */ }
+  }
+  function scrollToEl(node) {
+    var reduce = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    var y = node.getBoundingClientRect().top + window.pageYOffset - 56;
+    window.scrollTo({ top: Math.max(0, y), behavior: reduce ? "auto" : "smooth" });
+  }
+  function status(text) { $("#run-status").textContent = text; }
+  function progress(f) { $("#run-progress").style.width = Math.round(Math.max(0, Math.min(1, f)) * 100) + "%"; }
+  function setBusy(on) {
+    state.busy = on;
+    $("#run-fields").disabled = on;
+    $("#run-btn").disabled = on;
+    $("#sweep-btn").disabled = on;
+    $("#run-btn").hidden = on;
+    $("#stop-btn").hidden = !on;
+    $("#stop-btn").disabled = false;
+    if (!on) state.cancel = false;
+  }
+  function tick() { return new Promise(function (r) { window.setTimeout(r, 0); }); }
+
+  function pythonResult(workload, fraction, policies) {
+    var rows = D.results.filter(function (r) { return r.workload === workload && Math.abs(r.memory_fraction - fraction) < 1e-9; });
+    if (!rows.length) return null;
+    var by = {};
+    rows.forEach(function (r) { by[r.policy] = r; });
+    return {
+      source: "python", workload: workload, fraction: fraction, frames: rows[0].frames, accesses: rows[0].accesses, distinct: rows[0].distinct_pages,
+      rows: policies.filter(function (p) { return by[p]; }).map(function (p) {
+        var r = by[p];
+        return { policy: p, faults: r.faults, faultRate: r.fault_rate, usPerFault: r.us_per_fault, fallbackRate: p === "Learned" ? r.fallback_rate : null, guardedRate: p === "Learned" ? r.guarded_rate : null };
+      })
+    };
+  }
+
+  function rowMap(rows) { var by = {}; rows.forEach(function (r) { by[r.policy] = r; }); return by; }
+
+  function renderRunOutput(res) {
+    state.last = res;
+    var by = rowMap(res.rows), lru = by.LRU, opt = by.OPT;
+    // summary strip
+    var tag = $("#run-summary-tag"), txt = $("#run-summary-text");
+    tag.textContent = res.source === "python" ? "Python result, shown while this browser runs" : "Result from this browser";
+    txt.textContent = "";
+    var subject = by.Learned ? "Learned" : null;
+    if (!subject) {
+      var online = res.rows.filter(function (r) { return r.policy !== "OPT"; }).sort(function (a, b) { return a.faults - b.faults; });
+      subject = online.length ? online[0].policy : "LRU";
+    }
+    var S = by[subject];
+    var red = M.faultReduction(lru.faults, S.faults), gap = M.gapClosed(lru.faults, S.faults, opt.faults);
+    var head = by.Learned ? "Learned vs LRU: " : "Learned is not selected. Best online policy, " + subject + ", vs LRU: ";
+    append(txt, [head, el("b", { text: fmtPct(Math.abs(red)) }), red >= 0 ? " fewer page faults" : " more page faults"]);
+    if (isFinite(gap)) append(txt, [", ", el("b", { text: fmtPct(gap) }), " of the gap to OPT closed."]);
+    else append(txt, [". LRU already matches OPT here, so there is no gap to close."]);
+    append(txt, [el("br"), el("span", { class: "note", text: res.workload + DOT + fracLabel(res.fraction) + " memory = " + res.frames + " frames" + DOT + fmtInt(res.accesses) + " references" })]);
+
+    // context
+    var ctx = $("#run-context");
+    if (res.source === "python") {
+      ctx.textContent = "Python simulator on the full " + res.workload + " test trace (" + fmtInt(res.accesses) + " references, " + fmtInt(res.distinct) + " distinct pages), " + fracLabel(res.fraction) + " memory = " + res.frames + " frames. This browser is running the same setup now.";
+    } else {
+      ctx.textContent = "This browser: " + res.workload + ", " + fmtInt(res.accesses) + " references (" + fmtInt(res.distinct) + " distinct pages), " + fracLabel(res.fraction) + " memory = " + res.frames + " frames, seed " + 300 + ". Run took " + fmtNum(res.ms / 1000, 1) + " s.";
+    }
+
+    // chart
+    var rows = res.rows.map(function (r) {
+      var rr = M.faultReduction(lru.faults, r.faults), gc = M.gapClosed(lru.faults, r.faults, opt.faults);
+      return {
+        key: r.policy, label: r.policy, value: 100 * r.faultRate, ref: r.policy === "OPT",
+        aria: r.policy + ": fault rate " + fmtPct(100 * r.faultRate, 2) + ", " + fmtInt(r.faults) + " page faults",
+        tip: function (t) {
+          tipTitle(t, r.policy + (r.policy === "OPT" ? " (lower bound)" : ""));
+          tipLine(t, "Fault rate", fmtPct(100 * r.faultRate, 2));
+          tipLine(t, "Page faults", fmtInt(r.faults) + " of " + fmtInt(res.accesses));
+          if (r.policy !== "LRU") tipLine(t, "vs LRU", rr >= 0 ? fmtPct(rr) + " fewer" : fmtPct(-rr) + " more");
+          if (r.policy !== "LRU" && r.policy !== "OPT" && isFinite(gc)) tipLine(t, "Gap to OPT closed", fmtPct(gc));
+        }
+      };
+    });
+    chart($("#run-chart"), function (w) {
+      drawBars($("#run-chart"), w, {
+        rows: rows, aria: "Fault rate per policy, " + res.workload + ", " + res.frames + " frames",
+        fmt: function (v) { return fmtPct(v); }, tickFmt: function (t, st) { return fmtNum(t, decimalsFor(st)) + "%"; },
+        refLine: { value: 100 * opt.faultRate, label: "OPT" }
+      });
+    });
+
+    // table
+    var online = res.rows.filter(function (r) { return r.policy !== "OPT"; });
+    var best = Math.min.apply(null, online.map(function (r) { return r.faults; }));
+    var timeHead = res.source === "python" ? "Time per fault (" + MU + ", Python)" : "Time per fault (" + MU + ", measured in this browser)";
+    tableFrom($("#run-table"), ["Policy", "Page faults", "Fault rate", "Fewer faults than LRU", "Gap to OPT closed", timeHead, "Learned: LRU fallback", "Learned: guard on"],
+      res.rows.map(function (r) {
+        var rr = M.faultReduction(lru.faults, r.faults), gc = M.gapClosed(lru.faults, r.faults, opt.faults);
+        var isBest = r.policy !== "OPT" && r.faults === best;
+        return {
+          cells: [
+            pcell(r.policy),
+            { v: fmtInt(r.faults), cls: isBest ? "best" : null },
+            { v: fmtPct(100 * r.faultRate, 2), cls: isBest ? "best" : null },
+            r.policy === "LRU" ? { v: "baseline", cls: "muted" } : fmtPct(rr),
+            r.policy === "LRU" ? { v: "baseline", cls: "muted" } : fmtPct(gc),
+            fmtNum(r.usPerFault, 2),
+            r.fallbackRate === null || r.fallbackRate === undefined ? "" : fmtPct(100 * r.fallbackRate, 2),
+            r.guardedRate === null || r.guardedRate === undefined ? "" : fmtPct(100 * r.guardedRate, 1)
+          ]
+        };
+      }), { caption: "Page faults per policy" });
+    var cmd = $("#run-cmd");
+    cmd.textContent = "";
+    append(cmd, ["Same setup in Python (full test trace): ", el("b", { text: "python -m mlpr simulate --workload " + res.workload + " --memory " + res.fraction })]);
+    var out = $("#run-output");
+    out.setAttribute("data-state", res.source === "python" ? "placeholder" : "done");
+    out.setAttribute("data-source", res.source);
+  }
+
+  async function runSimulation(auto) {
+    if (state.busy) return;
+    var cfg = readRunConfig();
+    store("mlpr.run", cfg);
+    setBusy(true);
+    progress(0);
+    var t0 = performance.now();
+    try {
+      status("Building the " + cfg.workload + " reference string\u2026");
+      await tick();
+      var tr = getTrace(cfg.workload, cfg.length);
+      var frames = M.framesFor(tr.trace, cfg.fraction);
+      var rows = [];
+      for (var i = 0; i < cfg.policies.length; i++) {
+        if (state.cancel) break;
+        var p = cfg.policies[i];
+        status("Running " + p + " (" + (i + 1) + " of " + cfg.policies.length + ") on " + fmtInt(tr.trace.length) + " references, " + frames + " frames");
+        progress(i / cfg.policies.length);
+        await tick();
+        var r = M.simulate(tr.trace, M.makePolicy(p, frames, { trace: tr.trace }), { timed: true });
+        rows.push({ policy: p, faults: r.faults, faultRate: r.faultRate, usPerFault: r.usPerFault, fallbackRate: r.extra.fallbackRate, guardedRate: r.extra.guardedRate });
+      }
+      if (state.cancel) { status("Stopped. The previous result is still shown."); return; }
+      var ms = performance.now() - t0;
+      progress(1);
+      renderRunOutput({ source: "browser", workload: cfg.workload, fraction: cfg.fraction, frames: frames, accesses: tr.trace.length, distinct: tr.distinct, length: cfg.length, rows: rows, ms: ms });
+      $("#run-output").setAttribute("data-ms", Math.round(ms));
+      status("Done: " + rows.length + " policies in " + fmtNum(ms / 1000, 1) + " s.");
+      if (!auto) {
+        var top = $("#run-output").getBoundingClientRect().top;
+        if (top > window.innerHeight * 0.6) scrollToEl($("#run-output"));
+      }
+    } catch (err) {
+      status("Error: " + (err && err.message ? err.message : String(err)));
+    } finally {
+      setBusy(false);
+      window.setTimeout(function () { if (!state.busy) progress(0); }, 600);
+    }
+  }
+
+  async function runSweep() {
+    if (state.busy) return;
+    var cfg = readRunConfig();
+    setBusy(true);
+    progress(0);
+    var t0 = performance.now();
+    try {
+      status("Building the " + cfg.workload + " reference string\u2026");
+      await tick();
+      var tr = getTrace(cfg.workload, cfg.length);
+      var sizes = FRACTIONS.map(function (f) { return { fraction: f, frames: M.framesFor(tr.trace, f) }; });
+      var rates = {}, total = cfg.policies.length * sizes.length, done = 0;
+      for (var i = 0; i < cfg.policies.length && !state.cancel; i++) {
+        var p = cfg.policies[i], memo = {};
+        rates[p] = [];
+        for (var j = 0; j < sizes.length; j++) {
+          if (state.cancel) break;
+          var fr = sizes[j].frames;
+          if (memo[fr] === undefined) {
+            status("Sweep: " + p + " at " + fracLabel(sizes[j].fraction) + " (" + fr + " frames), " + (done + 1) + " of " + total);
+            progress(done / total);
+            await tick();
+            memo[fr] = M.simulate(tr.trace, M.makePolicy(p, fr, { trace: tr.trace }), { timed: false }).faultRate;
+          }
+          rates[p].push(memo[fr]);
+          done++;
+        }
+      }
+      if (state.cancel) { status("Sweep stopped."); return; }
+      progress(1);
+      var ms = performance.now() - t0;
+      renderSweep({ workload: cfg.workload, length: tr.trace.length, distinct: tr.distinct, sizes: sizes, policies: cfg.policies, rates: rates });
+      status("Sweep done: " + total + " runs in " + fmtNum(ms / 1000, 1) + " s.");
+      var box = $("#sweep-out");
+      if (box.getBoundingClientRect().top > window.innerHeight * 0.6) scrollToEl(box);
+    } catch (err) {
+      status("Error: " + (err && err.message ? err.message : String(err)));
+    } finally {
+      setBusy(false);
+      window.setTimeout(function () { if (!state.busy) progress(0); }, 600);
+    }
+  }
+
+  function renderSweep(sw) {
+    var box = $("#sweep-out");
+    box.textContent = "";
+    box.setAttribute("data-state", "done");
+    box.appendChild(el("p", { class: "note", text: "This browser: " + sw.workload + ", " + fmtInt(sw.length) + " references (" + fmtInt(sw.distinct) + " distinct pages)." }));
+    var panel = el("div", { class: "panel" });
+    var ul = el("ul", { class: "legend" });
+    legend(ul, sw.policies, "line");
+    panel.appendChild(ul);
+    var plot = el("div", { class: "plot", id: "sweep-chart" });
+    panel.appendChild(plot);
+    box.appendChild(panel);
+    var xs = sw.sizes.map(function (s, i) { return { pos: i, label: fracLabel(s.fraction), sub: s.frames + " frames" }; });
+    var series = sw.policies.map(function (p) { return { key: p, name: p, ref: p === "OPT", values: sw.rates[p].map(function (v) { return 100 * v; }) }; });
+    chart(plot, function (w) {
+      drawLines(plot, w, {
+        xs: xs, series: series, xSub: true, height: 240, aria: "Fault rate against memory size, " + sw.workload,
+        yFmt: function (t, st) { return fmtNum(t, decimalsFor(st)) + "%"; },
+        tipFmt: function (v) { return fmtPct(v, 2); },
+        tipTitle: function (i) { return sw.workload + DOT + fracLabel(sw.sizes[i].fraction) + " memory" + DOT + sw.sizes[i].frames + " frames"; }
+      });
+    });
+    var table = el("table", { class: "data", id: "sweep-table" });
+    tableFrom(table, ["Policy"].concat(sw.sizes.map(function (s) { return [fracLabel(s.fraction), el("br"), el("span", { class: "nw", text: s.frames + " frames" })]; })),
+      sw.policies.map(function (p) { return { cells: [pcell(p, "line")].concat(sw.rates[p].map(function (v) { return fmtPct(100 * v, 2); })) }; }),
+      { caption: "Fault rate by memory size" });
+    box.appendChild(el("div", { class: "scroll" }, table));
+  }
+
+  // ================================================================== TEXTBOOK
+  var BELADY = [1, 2, 3, 4, 1, 2, 5, 1, 2, 3, 4, 5];
+  function parseRefs(text) {
+    var s = String(text).trim();
+    if (!s) return { error: ["Type at least one page number."] };
+    var toks = s.split(/[\s,;]+/).filter(Boolean);
+    for (var i = 0; i < toks.length; i++) {
+      if (!/^\d+$/.test(toks[i])) return { error: ["Not a page number: ", el("code", { text: toks[i].slice(0, 12) }), ". Use whole numbers separated by spaces or commas."] };
+    }
+    if (toks.length > 60) return { error: ["Use at most 60 references (this string has " + toks.length + ")."] };
+    var refs = toks.map(Number);
+    if (refs.some(function (v) { return v > 99999; })) return { error: ["Page numbers go up to 99999."] };
+    return { refs: refs };
+  }
+  function buildTextbook() {
+    var pols = $("#tb-pols");
+    POLS.forEach(function (p) {
+      var id = "tb-pol-" + p;
+      pols.appendChild(el("div", { class: "opt" }, [
+        el("input", { type: "radio", name: "tb-policy", id: id, value: p, checked: p === state.tb.policy }),
+        el("label", { for: id, class: "chip" }, [keySvg(p, "bar"), p])
+      ]));
+    });
+    state.tb.refs = M.TEXTBOOK.slice();
+    var input = $("#tb-string");
+    input.value = state.tb.refs.join(" ");
+    var timer = null;
+    input.addEventListener("input", function () {
+      window.clearTimeout(timer);
+      timer = window.setTimeout(function () { onRefs(input.value); }, 160);
+    });
+    $("#tb-form").addEventListener("submit", function (e) { e.preventDefault(); onRefs(input.value); });
+    function preset(refs) { input.value = refs.join(" "); onRefs(input.value); }
+    $("#tb-preset-textbook").addEventListener("click", function () { preset(M.TEXTBOOK); });
+    $("#tb-preset-belady").addEventListener("click", function () { preset(BELADY); });
+    $("#tb-preset-random").addEventListener("click", function () {
+      var refs = [];
+      for (var i = 0; i < 20; i++) refs.push(Math.floor(Math.random() * 8));
+      preset(refs);
+    });
+    var fr = $("#tb-frames");
+    function setFrames(n) {
+      n = Math.max(1, Math.min(7, Math.round(n) || 3));
+      fr.value = n;
+      state.tb.frames = n;
+      $("#tb-frames-down").disabled = n <= 1;
+      $("#tb-frames-up").disabled = n >= 7;
+      renderTextbook();
+    }
+    $("#tb-frames-down").addEventListener("click", function () { setFrames(state.tb.frames - 1); });
+    $("#tb-frames-up").addEventListener("click", function () { setFrames(state.tb.frames + 1); });
+    fr.addEventListener("change", function () { setFrames(Number(fr.value)); });
+    pols.addEventListener("change", function () {
+      var c = $("input[name=tb-policy]:checked");
+      if (c) { state.tb.policy = c.value; renderTextbook(); }
+    });
+    setFrames(3);
+  }
+  function onRefs(text) {
+    var res = parseRefs(text), err = $("#tb-error"), input = $("#tb-string");
+    if (res.error) {
+      err.textContent = "";
+      append(err, res.error);
+      err.hidden = false;
+      input.setAttribute("aria-invalid", "true");
+      return;
+    }
+    err.hidden = true;
+    input.removeAttribute("aria-invalid");
+    state.tb.refs = res.refs;
+    renderTextbook();
+  }
+  function tbFaults(refs, frames, p) {
+    return M.simulate(refs, M.makePolicy(p, frames, { trace: refs }), { timed: false }).faults;
+  }
+  function renderTextbook() {
+    var refs = state.tb.refs, frames = state.tb.frames, pol = state.tb.policy, n = refs.length;
+    var steps = M.traceFrames(refs, M.makePolicy(pol, frames, { trace: refs }));
+    var faults = steps.filter(function (s) { return !s.hit; }).length;
+    var sum = $("#tb-summary");
+    sum.textContent = "";
+    append(sum, [el("span", { class: "tag", text: pol + DOT + frames + (frames === 1 ? " frame" : " frames") + DOT + n + " references" }),
+      el("b", { text: String(faults) }), " page faults and ", el("b", { text: String(n - faults) }), " hits. Fault rate ", el("b", { text: fmtPct(100 * faults / n, 0) }), "."]);
+
+    var table = $("#tb-table");
+    table.textContent = "";
+    table.appendChild(el("caption", { class: "vh", text: "Frame table for " + pol + " with " + frames + " frames" }));
+    var thead = el("thead"), htr = el("tr");
+    htr.appendChild(el("th", { class: "corner", scope: "col", text: "ref" }));
+    steps.forEach(function (s, t) { htr.appendChild(el("th", { scope: "col" }, [String(s.page), el("small", { text: "t" + (t + 1) })])); });
+    thead.appendChild(htr);
+    table.appendChild(thead);
+    var tb = el("tbody");
+    for (var f = 0; f < frames; f++) {
+      var tr = el("tr");
+      tr.appendChild(el("th", { scope: "row", text: "frame " + (f + 1) }));
+      steps.forEach(function (s, t) {
+        var v = s.frames[f];
+        var prev = t > 0 ? steps[t - 1].frames[f] : null;
+        var cls = null;
+        if (v !== null && v === s.page) cls = s.hit ? "hit" : (prev !== v ? "new" : null);
+        tr.appendChild(el("td", { class: cls, text: v === null || v === undefined ? "" : String(v) }));
+      });
+      tb.appendChild(tr);
+    }
+    var res = el("tr", { class: "res" }), vic = el("tr", { class: "vic" });
+    res.appendChild(el("th", { scope: "row", text: "fault?" }));
+    vic.appendChild(el("th", { scope: "row", text: "victim" }));
+    steps.forEach(function (s) {
+      res.appendChild(el("td", { class: s.hit ? "h" : "f", text: s.hit ? "hit" : "F" }));
+      vic.appendChild(el("td", { text: s.victim === null ? "" : String(s.victim) }));
+    });
+    tb.appendChild(res);
+    tb.appendChild(vic);
+    table.appendChild(tb);
+
+    var counts = POLS.map(function (p) { return { p: p, f: tbFaults(refs, frames, p) }; });
+    var host = $("#tb-bars");
+    host.setAttribute("data-counts", JSON.stringify(counts.reduce(function (o, c) { o[c.p] = c.f; return o; }, {})));
+    var rows = counts.map(function (c) {
+      return {
+        key: c.p, label: c.p, value: c.f, ref: c.p === "OPT", selected: c.p === pol,
+        aria: c.p + ": " + c.f + " page faults. Show its frame table",
+        tip: function (t) {
+          tipTitle(t, c.p + (c.p === "OPT" ? " (lower bound)" : ""));
+          tipLine(t, "Page faults", c.f + " of " + n);
+          tipLine(t, "Hits", String(n - c.f));
+        }
+      };
+    });
+    chart(host, function (w) {
+      drawBars(host, w, {
+        rows: rows, aria: "Page faults of every policy on this reference string with " + frames + " frames",
+        fmt: function (v) { return String(v); }, tickFmt: function (t) { return fmtNum(t, 0); },
+        domainMax: n, band: 34,
+        onSelect: function (p) {
+          state.tb.policy = p;
+          var r = $("#tb-pol-" + p);
+          if (r) r.checked = true;
+          renderTextbook();
+          var row = $("#tb-bars .bar-row[data-policy=" + p + "]");
+          if (row) row.focus({ preventScroll: true });
+        }
+      });
+    });
+
+    var note = $("#tb-belady");
+    var msg = null;
+    if (frames < 7) {
+      var a = counts.filter(function (c) { return c.p === "FIFO"; })[0].f, b = tbFaults(refs, frames + 1, "FIFO");
+      if (b > a) msg = "Belady's anomaly: FIFO takes " + a + " page faults with " + frames + " frames but " + b + " with " + (frames + 1) + ". More memory, more faults. LRU and OPT never do this.";
+    }
+    if (!msg && frames > 1) {
+      var c0 = tbFaults(refs, frames - 1, "FIFO"), c1 = counts.filter(function (c) { return c.p === "FIFO"; })[0].f;
+      if (c1 > c0) msg = "Belady's anomaly: FIFO takes " + c0 + " page faults with " + (frames - 1) + " frames but " + c1 + " with " + frames + ". More memory, more faults. LRU and OPT never do this.";
+    }
+    note.hidden = !msg;
+    note.textContent = msg || "";
+  }
+
+  // ================================================================== RESULTS
+  function resultCases() {
+    var map = {}, list = [];
+    D.results.forEach(function (r) {
+      var k = r.workload + "|" + r.memory_fraction;
+      if (!map[k]) { map[k] = { workload: r.workload, fraction: r.memory_fraction, frames: r.frames, by: {} }; list.push(map[k]); }
+      map[k].by[r.policy] = r;
+    });
+    return list;
+  }
+  function meanReduction(cases, p, w) {
+    return mean(cases.filter(function (c) { return (!w || c.workload === w) && c.by[p] && c.by.LRU; }).map(function (c) { return M.faultReduction(c.by.LRU.faults, c.by[p].faults); }));
+  }
+  function pooledGap(cases, p, w) {
+    var l = 0, f = 0, o = 0;
+    cases.forEach(function (c) {
+      if ((w && c.workload !== w) || !c.by[p] || !c.by.LRU || !c.by.OPT) return;
+      l += c.by.LRU.faults; f += c.by[p].faults; o += c.by.OPT.faults;
+    });
+    return M.gapClosed(l, f, o);
+  }
+
+  function renderResults() {
+    var cases = resultCases();
+    var workloads = [];
+    cases.forEach(function (c) { if (workloads.indexOf(c.workload) < 0) workloads.push(c.workload); });
+    var fracs = [];
+    cases.forEach(function (c) { if (fracs.indexOf(c.fraction) < 0) fracs.push(c.fraction); });
+    fracs.sort(function (a, b) { return a - b; });
+    var rivals = ["ARC", "LeCaR", "Learned"].filter(function (p) { return cases.some(function (c) { return c.by[p]; }); });
+    var red = {}, gap = {};
+    rivals.forEach(function (p) { red[p] = meanReduction(cases, p); gap[p] = pooledGap(cases, p); });
+
+    $("#res-lede").textContent = "Measured by the Python simulator (python -m mlpr evaluate) on the unseen test traces" + (D.source ? ", commit " + D.source : "") + ". Nothing in this view is recomputed in the browser.";
+
+    var hero = $("#res-hero");
+    hero.textContent = "";
+    hero.appendChild(el("div", { class: "hero-fig" }, [
+      el("span", { class: "big", text: fmtPct(red.Learned) }),
+      el("span", { class: "cap", text: "fewer page faults than LRU for the learned policy, mean over " + cases.length + " test cases (" + workloads.length + " workloads \u00d7 " + fracs.length + " memory sizes)." })
+    ]));
+    var ht = el("table", { class: "data", id: "res-hero-table" });
+    tableFrom(ht, ["Policy", "Fewer faults than LRU (mean)", "Gap to OPT closed (pooled)"],
+      rivals.map(function (p) {
+        var bestR = Math.max.apply(null, rivals.map(function (q) { return red[q]; })), bestG = Math.max.apply(null, rivals.map(function (q) { return gap[q]; }));
+        return { cells: [pcell(p), { v: fmtPct(red[p]), cls: red[p] === bestR ? "best" : null }, { v: fmtPct(gap[p]), cls: gap[p] === bestG ? "best" : null }] };
+      }), { caption: "Headline comparison" });
+    hero.appendChild(el("div", { class: "scroll", style: "margin:0" }, ht));
+    var others = rivals.filter(function (p) { return p !== "Learned"; });
+    $("#res-headline").textContent = "Over all workloads and memory sizes, the learned policy takes " + fmtPct(red.Learned) + " fewer page faults than LRU on average (" +
+      others.map(function (p) { return p + " " + fmtPct(red[p]); }).join(", ") + ") and closes " + fmtPct(gap.Learned) + " of the pooled LRU-to-OPT gap (" +
+      others.map(function (p) { return p + " " + fmtPct(gap[p]); }).join(", ") + ").";
+
+    // per-workload table
+    var rowsT = workloads.concat([null]).map(function (w) {
+      var rv = rivals.map(function (p) { return meanReduction(cases, p, w); });
+      var gv = rivals.map(function (p) { return pooledGap(cases, p, w); });
+      var br = Math.max.apply(null, rv), bg = Math.max.apply(null, gv.filter(isFinite));
+      return {
+        cls: w ? null : "all",
+        cells: [w || "all"].concat(rv.map(function (v) { return { v: fmtPct(v), cls: v === br ? "best" : null }; }))
+          .concat(gv.map(function (v) { return { v: fmtPct(v), cls: v === bg ? "best" : null }; }))
+      };
+    });
+    tableFrom($("#res-table"), ["Workload"].concat(rivals, rivals), rowsT,
+      { caption: "Fault reduction and gap closed per workload", groups: [{ span: 1, text: "" }, { span: rivals.length, text: "Fewer faults than LRU" }, { span: rivals.length, text: "Gap to OPT closed" }] });
+
+    // small multiples
+    var linePols = ["LRU", "ARC", "LeCaR", "Learned"].filter(function (p) { return cases.some(function (c) { return c.by[p]; }); });
+    legend($("#sm-legend"), linePols.concat(["OPT"]), "line");
+    var grid = $("#sm-grid");
+    grid.textContent = "";
+    workloads.forEach(function (w) {
+      var mine = cases.filter(function (c) { return c.workload === w; }).sort(function (a, b) { return a.fraction - b.fraction; });
+      var info = workloadInfo(w);
+      var plot = el("div", { class: "plot" });
+      grid.appendChild(el("figure", { class: "sm" }, [el("figcaption", null, [w, el("span", { text: mine.length ? mine[0].by.LRU.kind : "" })]), plot]));
+      var xs = mine.map(function (c, i) { return { pos: i, label: fracLabel(c.fraction) }; });
+      var series = linePols.concat(["OPT"]).map(function (p) {
+        return { key: p, name: p === "OPT" ? "OPT" : p, ref: p === "OPT", values: mine.map(function (c) { return c.by[p] ? 100 * c.by[p].fault_rate : NaN; }) };
+      });
+      chart(plot, function (wd) {
+        drawLines(plot, wd, {
+          xs: xs, series: series, height: 150, inset: 10, padRight: 4, yTicks: 3,
+          aria: "Fault rate against memory size for " + w + (info ? ", " + info.tests : ""),
+          yFmt: function (t, st) { return fmtNum(t, decimalsFor(st)) + "%"; },
+          tipFmt: function (v) { return fmtPct(v, 1); },
+          tipTitle: function (i) { return w + DOT + fracLabel(mine[i].fraction) + " memory" + DOT + mine[i].frames + " frames"; }
+        });
+      });
+    });
+    var allPols = POLS.filter(function (p) { return cases.some(function (c) { return c.by[p]; }); });
+    tableFrom($("#sm-table"), ["Workload", "Memory", "Frames"].concat(allPols),
+      workloads.reduce(function (acc, w) {
+        return acc.concat(cases.filter(function (c) { return c.workload === w; }).sort(function (a, b) { return a.fraction - b.fraction; }).map(function (c) {
+          var online = allPols.filter(function (p) { return p !== "OPT" && c.by[p]; }).map(function (p) { return c.by[p].fault_rate; });
+          var best = Math.min.apply(null, online);
+          return { cells: [w, fracLabel(c.fraction), String(c.frames)].concat(allPols.map(function (p) { return c.by[p] ? { v: fmtNum(100 * c.by[p].fault_rate, 1), cls: p !== "OPT" && c.by[p].fault_rate === best ? "best" : null } : ""; })) };
+        }));
+      }, []), { caption: "Fault rate in percent; bold is the best online policy" });
+
+    // cost
+    var times = {};
+    D.results.forEach(function (r) { if (r.faults > 0) (times[r.policy] = times[r.policy] || []).push(r.us_per_fault); });
+    var lruMed = median(times.LRU || []);
+    tableFrom($("#cost-table"), ["Policy", "Median time per fault (" + MU + ", Python)", "Relative to LRU"],
+      allPols.filter(function (p) { return times[p]; }).map(function (p) {
+        var m = median(times[p]);
+        return { cells: [pcell(p), fmtNum(m, 2), fmtNum(m / lruMed, 1) + "\u00d7"] };
+      }), { caption: "Cost per page fault" });
+    var kv = $("#cost-kv");
+    kv.textContent = "";
+    var nParams = D.model.kind === "logistic" ? D.model.weights.length + 1 : null;
+    var learnedRows = D.results.filter(function (r) { return r.policy === "Learned"; });
+    var items = [
+      ["Learned: metadata per resident page, " + M.RAW_FIELDS.length + " fields \u00d7 4 bytes", (M.RAW_FIELDS.length * 4) + " bytes"],
+      ["Learned: model, " + (nParams ? nParams + " parameters as float32" : D.model.kind), nParams ? (4 * nParams) + " bytes" : ""],
+      ["Evictions decided by the LRU fallback (model unsure)", fmtPct(100 * mean(learnedRows.map(function (r) { return r.fallback_rate; })), 3)],
+      ["Evictions made while the guard had handed over to LRU", fmtPct(100 * mean(learnedRows.map(function (r) { return r.guarded_rate; })), 1)]
+    ];
+    items.forEach(function (it) { kv.appendChild(el("li", null, [el("span", { text: it[0] }), el("b", { text: it[1] })])); });
+  }
+
+  // ================================================================== MODEL
+  function featureNames() {
+    var meta = D.model.meta || {};
+    return (meta.feature_names && meta.feature_names.length === M.FEATURE_NAMES.length) ? meta.feature_names : M.FEATURE_NAMES;
+  }
+  function renderModel() {
+    var model = D.model, meta = model.meta || {}, cfg = meta.config || {};
+    var k = meta.k || 16, thr = meta.threshold !== undefined ? meta.threshold : 0.5, hz = meta.horizon || cfg.horizon || 2, dag = cfg.dagger_rounds;
+    var logistic = model.kind === "logistic";
+    var nParams = logistic ? model.weights.length + 1 : null;
+    $("#model-lede").textContent = (logistic ? "A logistic regression with " + model.weights.length + " weights and a bias" : "A " + model.kind + " model") +
+      ", trained offline to imitate Belady's OPT. At every page fault it scores " + k + " sampled resident pages and evicts the one least likely to be needed soon.";
+
+    // pipeline
+    var pipe = $("#pipe");
+    pipe.textContent = "";
+    function step(cls, title, rest, branch) {
+      var li = el("li", cls ? { class: cls } : null, [el("b", { text: title }), " ", rest]);
+      if (branch) li.appendChild(el("span", { class: "br" }, branch));
+      return li;
+    }
+    pipe.appendChild(el("div", { class: "lane" }, [el("h3", { text: "Offline, once before use" }), el("ol", { class: "steps" }, [
+      step(null, "Replay", "the training traces with OPT, which knows the future."),
+      step(null, "Label", k + " sampled resident pages at each eviction: 1 if the next use is more than " + hz + " \u00d7 frames references away (not needed soon), else 0."),
+      step(null, "Train", (logistic ? "logistic regression" : model.kind) + " on the " + M.FEATURE_NAMES.length + " features of each sampled page."),
+      step("dec", "DAgger", "replay with the trained model, still label with the future, retrain.", ["repeat " + (dag !== undefined ? dag + " rounds" : "a few rounds") + ", then ship the weights"])
+    ])]));
+    pipe.appendChild(el("div", { class: "handoff" }, [el("span", { class: "arw" }, el("span", { text: "\u2193" })), (nParams ? nParams + " numbers" : "model") + " (" + (nParams ? 4 * nParams + " bytes" : "") + ")"]));
+    pipe.appendChild(el("div", { class: "lane" }, [el("h3", { text: "Online, at every page fault" }), el("ol", { class: "steps" }, [
+      step("dec", "Guard:", "losing to a shadow LRU lately?", [el("b", { text: "yes" }), " evict the exact LRU page", el("br"), el("b", { text: "no" }), " go on"]),
+      step(null, "Sample", k + " resident pages at random."),
+      step(null, "Score", "each one: probability it is not needed soon."),
+      step("dec", "Confident?", "best score at least " + thr + "?", [el("b", { text: "yes" }), " evict the top-scoring page", el("br"), el("b", { text: "no" }), " evict the LRU page of the sample"])
+    ])]));
+
+    var card = $("#model-card");
+    card.textContent = "";
+    [["Model", logistic ? "logistic, " + nParams + " parameters" : model.kind],
+      ["Pages sampled per fault (k)", String(k)],
+      ["Confidence threshold", String(thr)],
+      ["Label horizon", hz + " \u00d7 frames"],
+      ["Training examples", meta.train_examples ? fmtInt(meta.train_examples) : "n/a"],
+      ["Training accuracy", meta.train_accuracy ? fmtPct(100 * meta.train_accuracy) : "n/a"],
+      ["Validation faults vs LRU", meta.validation_faults_vs_lru ? fmtNum(meta.validation_faults_vs_lru, 3) + " (1 = LRU)" : "n/a"]
+    ].forEach(function (it) { card.appendChild(el("li", null, [el("span", { text: it[0] }), el("b", { text: it[1] })])); });
+
+    // weights
+    var names = featureNames();
+    if (logistic) {
+      var feats = model.features || names.map(function (_, i) { return i; });
+      var rows = feats.map(function (fi, j) {
+        var w = model.weights[j];
+        return {
+          label: names[fi], value: w,
+          tip: function (t) {
+            tipTitle(t, names[fi]);
+            tipLine(t, "Weight", fmtNum(w, 4));
+            t.appendChild(el("div", { class: "tip-l", text: w >= 0 ? "Larger value: more likely evicted" : "Larger value: more likely kept" }));
+          }
+        };
+      });
+      var wh = $("#weights-chart");
+      chart(wh, function (w) {
+        drawDiverging(wh, w, { rows: rows, fmt: function (v) { return fmtNum(v, 3); }, negLabel: "keep", posLabel: "evict", aria: "Weights of the logistic regression per feature" });
+      });
+      tableFrom($("#weights-table"), ["Feature", "Weight", "Direction"],
+        rows.map(function (r) { return { cells: [r.label, fmtNum(r.value, 5), { v: r.value >= 0 ? "toward evict" : "toward keep", cls: "muted" }] }; })
+          .concat([{ cls: "all", cells: ["bias", fmtNum(model.bias, 5), ""] }]), { caption: "Model weights" });
+    } else {
+      $("#weights-chart").textContent = "This model is a " + model.kind + ", which has no per-feature weights.";
+    }
+
+    buildCalculator();
+    renderAblation();
+    buildSweepParam();
+  }
+
+  // ------------------------------------------------------------------ calculator
+  var CALC_FIELDS = [
+    { id: "calc-frames", label: "Frames in memory", min: 1, def: 100 },
+    { id: "calc-age", label: "Age: references since last use", min: 0, def: 300 },
+    { id: "calc-count", label: "References to the page so far", min: 1, def: 8 },
+    { id: "calc-gap1", label: "Gap 1 (newest)", min: 1, def: 20, gap: 1 },
+    { id: "calc-gap2", label: "Gap 2", min: 1, def: 25, gap: 2 },
+    { id: "calc-gap3", label: "Gap 3 (oldest)", min: 1, def: 30, gap: 3 }
+  ];
+  var CALC_PRESETS = {
+    hot: { frames: 100, age: 3, count: 40, gaps: [4, 3, 5] },
+    once: { frames: 100, age: 400, count: 1, gaps: [null, null, null] },
+    overdue: { frames: 100, age: 300, count: 8, gaps: [20, 25, 30] },
+    loop: { frames: 100, age: 150, count: 6, gaps: [200, 200, 200] }
+  };
+  function buildCalculator() {
+    var form = $("#calc-form");
+    form.textContent = "";
+    CALC_FIELDS.forEach(function (f) {
+      var kids = [el("label", { for: f.id, text: f.label }), el("input", { type: "number", id: f.id, min: f.min, step: 1, value: f.def, inputmode: "numeric", "aria-describedby": f.id + "-err" })];
+      if (f.gap) {
+        var cid = f.id + "-unseen";
+        kids.push(el("label", { class: "ns", for: cid }, [el("input", { type: "checkbox", id: cid }), "not seen yet"]));
+      }
+      kids.push(el("p", { class: "error", id: f.id + "-err", hidden: true }));
+      form.appendChild(el("div", { class: "field" }, kids));
+    });
+    form.addEventListener("input", function (e) {
+      var t = e.target;
+      if (t.id === "calc-count") syncGapsToCount();
+      computeScore();
+    });
+    form.addEventListener("change", function (e) {
+      var t = e.target;
+      if (t.type === "checkbox") {
+        var g = Number(t.id.replace(/\D/g, ""));
+        var count = $("#calc-count");
+        var n = Math.floor(Number(count.value)) || 1;
+        if (t.checked) count.value = Math.min(n, g);
+        else count.value = Math.max(n, g + 1);
+        syncGapsToCount();
+      }
+      computeScore();
+    });
+    form.addEventListener("submit", function (e) { e.preventDefault(); });
+    Object.keys(CALC_PRESETS).forEach(function (k) {
+      $("#calc-preset-" + k).addEventListener("click", function () {
+        var p = CALC_PRESETS[k];
+        $("#calc-frames").value = p.frames; $("#calc-age").value = p.age; $("#calc-count").value = p.count;
+        p.gaps.forEach(function (g, i) { if (g !== null) $("#calc-gap" + (i + 1)).value = g; });
+        syncGapsToCount();
+        computeScore();
+      });
+    });
+    $("#calc-hint").textContent = "Times (age, gaps, mean gap) are divided by the number of frames; every value is capped at " + M.CAP + " and fed as log2(1 + value). A gap not seen yet is filled in with the age. With more than four references, the older gaps are taken to match the average of the three shown.";
+    syncGapsToCount();
+    computeScore();
+  }
+  function syncGapsToCount() {
+    var n = Math.floor(Number($("#calc-count").value));
+    if (!(n >= 1)) return;
+    for (var g = 1; g <= 3; g++) {
+      var seen = n - 1 >= g;
+      $("#calc-gap" + g + "-unseen").checked = !seen;
+      $("#calc-gap" + g).disabled = !seen;
+    }
+  }
+  function readCalc() {
+    var vals = {}, ok = true;
+    CALC_FIELDS.forEach(function (f) {
+      var inp = $("#" + f.id), err = $("#" + f.id + "-err");
+      var raw = inp.value.trim(), v = Number(raw), bad = null;
+      if (!inp.disabled) {
+        if (raw === "" || !isFinite(v) || Math.floor(v) !== v) bad = "Enter a whole number.";
+        else if (v < f.min) bad = "At least " + f.min + ".";
+        else if (v > 1e9) bad = "Too large.";
+      }
+      inp.setAttribute("aria-invalid", bad ? "true" : "false");
+      err.hidden = !bad;
+      err.textContent = bad || "";
+      if (bad) ok = false;
+      vals[f.id.replace("calc-", "")] = inp.disabled ? null : v;
+    });
+    return ok ? vals : null;
+  }
+  function computeScore() {
+    var box = $("#calc-score"), v = readCalc();
+    if (!v) { box.classList.add("dim"); return; }
+    box.classList.remove("dim");
+    var count = v.count, seen = Math.min(3, count - 1);
+    var gaps = [v.gap1, v.gap2, v.gap3].map(function (g, i) { return i < seen ? g : -1; });
+    var known = gaps.filter(function (g) { return g >= 0; });
+    var gapSum = known.reduce(function (a, b) { return a + b; }, 0);
+    if (count - 1 > 3) gapSum = (gapSum / 3) * (count - 1);
+    var t = 1e7, raw = [t - v.age, count, gaps[0], gaps[1], gaps[2], gapSum];
+    var x = M.computeFeatures(t, [raw], v.frames)[0];
+    var p = M.scoreModel(D.model, [x])[0];
+    var thr = (D.model.meta && D.model.meta.threshold !== undefined) ? D.model.meta.threshold : 0.5;
+    var k = (D.model.meta && D.model.meta.k) || 16;
+    box.textContent = "";
+    var meter = el("div", { class: "meter pole-" + (p >= thr ? "evict" : "keep"), role: "img", "aria-label": "Score " + fmtNum(p, 3) + " against the threshold " + thr }, [
+      el("span", { style: "width:" + (100 * p).toFixed(1) + "%" }), el("i", { style: "left:" + (100 * thr) + "%" }), el("em", { style: "left:" + (100 * thr) + "%", text: "threshold " + thr })
+    ]);
+    box.appendChild(el("div", null, [el("span", { class: "lbl", text: "P(not needed soon)" }), el("span", { class: "big", id: "calc-p", text: fmtNum(p, 3) })]));
+    box.appendChild(el("div", null, [meter, el("p", { class: "verdict", text: p >= thr
+      ? "At or above the threshold: if this is the highest score among the " + k + " sampled pages, this page is evicted."
+      : "Below the threshold: the model expects this page back soon. If no sampled page reaches " + thr + ", the LRU page of the sample is evicted instead." })]));
+    var names = featureNames();
+    var feats = D.model.kind === "logistic" ? (D.model.features || names.map(function (_, i) { return i; })) : null;
+    var inputs = [v.age + " / " + v.frames, String(count), gaps[0] >= 0 ? gaps[0] + " / " + v.frames : "age", gaps[1] >= 0 ? gaps[1] + " / " + v.frames : "gap 1", gaps[2] >= 0 ? gaps[2] + " / " + v.frames : "gap 2",
+      count > 1 ? fmtNum(gapSum / (count - 1), 1) + " / " + v.frames : "age", "age / mean gap"];
+    var z = D.model.kind === "logistic" ? D.model.bias : NaN;
+    var rows = x.map(function (xi, j) {
+      var wj = feats ? feats.indexOf(j) : -1;
+      var w = wj >= 0 ? D.model.weights[wj] : NaN;
+      if (isFinite(w)) z += w * xi;
+      return { cells: [names[j], { v: inputs[j], cls: "muted" }, fmtNum(xi, 3), isFinite(w) ? fmtNum(w, 3) : "", isFinite(w) ? fmtNum(w * xi, 3) : ""] };
+    });
+    if (D.model.kind === "logistic") {
+      rows.push({ cls: "all", cells: ["bias + sum = z", "", "", "", fmtNum(z, 3)] });
+    }
+    tableFrom($("#calc-table"), ["Feature", "From", "Value", "Weight", "Weight \u00d7 value"], rows, { caption: "Feature values of this page" });
+  }
+
+  // ------------------------------------------------------------------ ablation and sweep
+  function renderAblation() {
+    var rows = D.ablation || [];
+    if (!rows.length) return;
+    var feat = rows.filter(function (r) { return r.variant.indexOf("design:") !== 0; });
+    var design = rows.filter(function (r) { return r.variant.indexOf("design:") === 0; });
+    function mk(r, strip) {
+      var label = strip ? r.variant.replace(/^design:\s*/, "") : r.variant;
+      var v = r.validation_faults_vs_lru;
+      return { label: label, value: v, tip: function (t) { tipTitle(t, r.variant); tipLine(t, "Faults vs LRU", fmtNum(v, 4)); t.appendChild(el("div", { class: "tip-l", text: v < 1 ? fmtPct(100 * (1 - v)) + " fewer faults than LRU" : fmtPct(100 * (v - 1)) + " more faults than LRU" })); } };
+    }
+    var groups = [];
+    if (feat.length) groups.push({ title: "Features (guard off)", rows: feat.map(function (r) { return mk(r, false); }) });
+    if (design.length) groups.push({ title: "Design (full pipeline)", rows: design.map(function (r) { return mk(r, true); }) });
+    var host = $("#ablation-chart");
+    chart(host, function (w) {
+      drawLabelledBars(host, w, { groups: groups, ref: { value: 1, label: "LRU = 1" }, fmt: function (v) { return fmtNum(v, 3); }, aria: "Ablation: validation faults relative to LRU" });
+    });
+    tableFrom($("#ablation-table"), ["Variant", "Faults vs LRU"], rows.map(function (r) { return { cells: [r.variant, fmtNum(r.validation_faults_vs_lru, 4)] }; }), { caption: "Ablation" });
+    var base = feat.filter(function (r) { return r.variant === "all features"; })[0];
+    var without = feat.filter(function (r) { return r.variant.indexOf("without ") === 0; }).sort(function (a, b) { return b.validation_faults_vs_lru - a.validation_faults_vs_lru; });
+    var only = feat.filter(function (r) { return r.variant.indexOf("only ") === 0; }).sort(function (a, b) { return a.validation_faults_vs_lru - b.validation_faults_vs_lru; });
+    var full = design.filter(function (r) { return /full/.test(r.variant); })[0];
+    var parts = [];
+    if (base && without.length) parts.push("Removing " + without[0].variant.replace("without ", "") + " hurts most (" + fmtNum(without[0].validation_faults_vs_lru, 3) + " against " + fmtNum(base.validation_faults_vs_lru, 3) + " with all features)" + (without[1] ? ", then " + without[1].variant.replace("without ", "") + " (" + fmtNum(without[1].validation_faults_vs_lru, 3) + ")." : "."));
+    if (only.length) parts.push("No single group is enough: the best, " + only[0].variant + ", scores " + fmtNum(only[0].validation_faults_vs_lru, 3) + ".");
+    if (full) {
+      var rest = design.filter(function (r) { return r !== full; });
+      parts.push("The full pipeline scores " + fmtNum(full.validation_faults_vs_lru, 3) + "; " + rest.map(function (r) { return r.variant.replace(/^design:\s*/, "") + " gives " + fmtNum(r.validation_faults_vs_lru, 3); }).join(", ") + ".");
+    }
+    $("#ablation-finding").textContent = parts.join(" ");
+  }
+
+  var PARAM_INFO = {
+    k: { title: "Pages sampled per fault (k)", scale: "log" },
+    threshold: { title: "Confidence threshold", scale: "linear" },
+    horizon: { title: "Label horizon (\u00d7 frames)", scale: "log" }
+  };
+  function buildSweepParam() {
+    var rows = D.sweep || [];
+    var params = [];
+    rows.forEach(function (r) { if (params.indexOf(r.parameter) < 0) params.push(r.parameter); });
+    if (!params.length) return;
+    var seg = $("#sweep-param-seg");
+    seg.textContent = "";
+    params.forEach(function (p) {
+      var id = "sweep-param-" + p;
+      seg.appendChild(el("div", { class: "opt" }, [el("input", { type: "radio", name: "sweep-param", id: id, value: p, checked: p === params[0] }), el("label", { for: id, text: p })]));
+    });
+    state.sweepParam = params[0];
+    seg.addEventListener("change", function () { var c = $("input[name=sweep-param]:checked"); if (c) { state.sweepParam = c.value; renderSweepParam(); } });
+    renderSweepParam();
+  }
+  function renderSweepParam() {
+    var p = state.sweepParam, info = PARAM_INFO[p] || { title: p, scale: "linear" };
+    var rows = D.sweep.filter(function (r) { return r.parameter === p; }).sort(function (a, b) { return a.value - b.value; });
+    var meta = D.model.meta || {};
+    var used = meta[p] !== undefined ? meta[p] : (meta.config || {})[p];
+    var usedIdx = rows.map(function (r) { return r.value; }).indexOf(used);
+    $("#sweep-param-cap").textContent = info.title + ": validation faults relative to LRU (lower is better). The ringed point is the value the shipped model uses.";
+    var xs = rows.map(function (r) { return { pos: info.scale === "log" ? Math.log2(r.value) : r.value, label: fmtNum(r.value, r.value % 1 ? 1 : 0) }; });
+    var series = [{ key: "Learned", name: "Learned", values: rows.map(function (r) { return r.validation_faults_vs_lru; }) }];
+    var host = $("#sweep-param-chart");
+    chart(host, function (w) {
+      drawLines(host, w, {
+        xs: xs, series: series, height: 200, refValue: 1, refLabel: "LRU = 1", yTicks: 2, padTop: 14,
+        mark: usedIdx >= 0 ? { index: usedIdx, label: "in use" } : null,
+        aria: "Parameter sweep for " + info.title,
+        yFmt: function (t, st) { return fmtNum(t, Math.max(1, decimalsFor(st))); },
+        tipFmt: function (v) { return fmtNum(v, 4); },
+        tipTitle: function (i) { return p + " = " + rows[i].value + (i === usedIdx ? " (in use)" : ""); },
+        tipExtra: function (t, i) { var v = rows[i].validation_faults_vs_lru; t.appendChild(el("div", { class: "tip-l", text: fmtPct(100 * (1 - v)) + " fewer faults than LRU" })); }
+      });
+    });
+    var best = rows.reduce(function (b, r) { return r.validation_faults_vs_lru < b.validation_faults_vs_lru ? r : b; }, rows[0]);
+    var worst = rows.reduce(function (b, r) { return r.validation_faults_vs_lru > b.validation_faults_vs_lru ? r : b; }, rows[0]);
+    $("#sweep-finding").textContent = "Best " + p + " = " + best.value + " (" + fmtNum(best.validation_faults_vs_lru, 4) + "), worst " + p + " = " + worst.value + " (" + fmtNum(worst.validation_faults_vs_lru, 4) + ")" + (usedIdx >= 0 ? "; the model uses " + p + " = " + used + " (" + fmtNum(rows[usedIdx].validation_faults_vs_lru, 4) + ")." : ".");
+    tableFrom($("#sweep-param-table"), [p, "Faults vs LRU"], rows.map(function (r, i) { return { cls: i === usedIdx ? "all" : null, cells: [String(r.value) + (i === usedIdx ? " (in use)" : ""), fmtNum(r.validation_faults_vs_lru, 4)] }; }), { caption: "Sweep of " + p });
+  }
+
+  // ================================================================== start
+  function start() {
+    var saved = recall("mlpr.theme");
+    if (saved) applyTheme(saved, false); else applyTheme("auto", false);
+    $("#theme-btn").addEventListener("click", function () {
+      var cur = $("#theme-btn").getAttribute("data-theme-choice") || "auto";
+      applyTheme(THEMES[(THEMES.indexOf(cur) + 1) % THEMES.length], true);
+    });
+    var h = location.hash.replace(/^#/, "");
+    showView(VIEWS.indexOf(h) >= 0 ? h : "run");
+    if (!M) { fatal("The simulator (engine.js) did not load. Reload the page; if it keeps failing, open it from the docs folder of the repository."); $("#run-summary-text").textContent = "The simulator did not load."; return; }
+    if (!D) { fatal("The data bundle (data.js) did not load, so the Results and Model views and the Learned policy are unavailable. Run python3 tools/build_web.py to rebuild it."); }
+    readFonts();
+    $("#build-info").textContent = "Engine " + M.VERSION + (D && D.source ? DOT + "data from commit " + D.source : "");
+    var steps = [
+      ["run", function () { buildRunControls(); updateFrameHints(); var ph = D ? pythonResult(state.run.workload, state.run.fraction, readRunConfig().policies) : null; if (ph) renderRunOutput(ph); }],
+      ["textbook", buildTextbook],
+      ["results", function () { if (D) renderResults(); }],
+      ["model", function () { if (D) renderModel(); }]
+    ];
+    steps.forEach(function (s) {
+      try { s[1](); } catch (err) { fatal("Could not draw the " + s[0] + " view: " + (err && err.message ? err.message : err)); }
+    });
+    if (document.fonts && document.fonts.ready) document.fonts.ready.then(function () { readFonts(); repaintAll(true); });
+    if (D) window.setTimeout(function () { runSimulation(true); }, 80);
+    else $("#run-summary-text").textContent = "Tap Run to simulate. The Learned policy needs data.js.";
+  }
+  start();
+})();
+</script>
