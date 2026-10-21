@@ -1,0 +1,18 @@
+[project]
+name = "mlpr"
+version = "0.1.0"
+description = "A lightweight learned page replacement policy, trained to imitate Belady's OPT, with a trace-driven simulator and classical baselines"
+readme = "README.md"
+requires-python = ">=3.9"
+authors = [{ name = "Rajveer Singh Chopra" }]
+dependencies = ["numpy>=1.22", "matplotlib>=3.5"]
+
+[project.optional-dependencies]
+test = ["pytest>=7"]
+
+[tool.setuptools]
+packages = ["mlpr", "mlpr.policies", "mlpr.traces"]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
