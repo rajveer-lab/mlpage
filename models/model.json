@@ -1,0 +1,59 @@
+{
+  "kind": "logistic",
+  "features": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5,
+    6
+  ],
+  "weights": [
+    -0.6976974775763526,
+    -0.3986312756072672,
+    0.010440591770061132,
+    -6.842777114413572e-05,
+    0.002849128844787093,
+    0.8210989933243125,
+    1.2669467097980045
+  ],
+  "bias": 0.8194297064166762,
+  "meta": {
+    "k": 16,
+    "threshold": 0.5,
+    "ghost": true,
+    "guard": true,
+    "horizon": 2.0,
+    "feature_names": [
+      "age",
+      "count",
+      "gap1",
+      "gap2",
+      "gap3",
+      "mean_gap",
+      "age_over_mean_gap"
+    ],
+    "train_examples": 2907865,
+    "train_accuracy": 0.7971,
+    "train_seconds": 150.51,
+    "validation_faults_vs_lru": 0.9213,
+    "config": {
+      "horizon": 2.0,
+      "k": 16,
+      "threshold": 0.5,
+      "ghost": true,
+      "guard": true,
+      "fractions": [
+        0.01,
+        0.02,
+        0.05,
+        0.1
+      ],
+      "evictions_per_run": 4000,
+      "dagger_rounds": 2,
+      "tree_depth": 4,
+      "seed": 0
+    }
+  }
+}
