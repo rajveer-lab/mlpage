@@ -150,18 +150,18 @@ def cost_figure(rows: list[dict], path: Path) -> None:
 def ablation_figure(rows: list[dict], path: Path) -> None:
     labels = [r["variant"] for r in rows]
     values = [float(r["validation_faults_vs_lru"]) for r in rows]
-    fig, ax = plt.subplots(figsize=(7.5, 0.32 * len(rows) + 1.3))
+    fig, ax = plt.subplots(figsize=(7.5, 0.32 * len(rows) + 1.5))
+    ax.axvline(1.0, color=REFERENCE, linestyle=(0, (4, 3)), linewidth=1.5, zorder=1)
     ax.barh(labels, values, color="#2a78d6", height=0.6, zorder=2)
+    right = max(values + [1.0]) * 1.1
     for y, v in enumerate(values):
-        ax.text(v, y, f"  {v:.3f}", va="center", color=INK_2, fontsize=8)
-    ax.axvline(1.0, color=REFERENCE, linestyle=(0, (4, 3)), linewidth=1.5)
+        ax.text(right, y, f"{v:.3f}", va="center", ha="right", color=INK_2, fontsize=8)
     ax.text(1.0, -0.9, " LRU", color=INK_2, fontsize=8)
-    low = min(values + [1.0])
-    ax.set_xlim(low - 0.05, max(values + [1.0]) + 0.06)
+    ax.set_xlim(min(values + [1.0]) - 0.05, right)
     ax.invert_yaxis()
     ax.grid(axis="y", visible=False)
     ax.set_xlabel("validation faults relative to LRU (lower is better)")
-    ax.set_title("Ablation: features and design choices", loc="left")
+    ax.set_title("Ablation: features (guard off) and design choices (full pipeline)", loc="left")
     fig.tight_layout()
     fig.savefig(path, dpi=150)
     plt.close(fig)

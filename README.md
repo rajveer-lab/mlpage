@@ -221,6 +221,36 @@ Training takes about 2.5 minutes on 2.9 million examples.
 
 ![Decision time per fault](results/plots/cost_per_fault.png)
 
+### Ablation and parameter sweep
+
+Run on the validation traces (`python -m mlpr ablation`, `python -m mlpr sweep`;
+tables in [`results/ablation_and_sweep.md`](results/ablation_and_sweep.md)).
+Score = learned faults / LRU faults, averaged over traces and memory sizes.
+
+![Ablation](results/plots/ablation.png)
+
+* **Which signals explain OPT's choices.** Reference count is the most important
+  feature (removing it: 0.983 → 1.115), followed by how overdue a page is
+  compared with its usual gap (`age_over_mean_gap`: → 1.003). The individual
+  gaps, the mean gap and the age each overlap with the others, so dropping any
+  one of them alone changes little. No group works on its own: recency only
+  (2.51) or frequency only (2.16) is far worse than LRU, and gap history only is
+  1.03. It is the combination that beats LRU.
+* **Design choices.** The regret guard turns the same model from 0.983 into
+  0.921. The two DAgger rounds are worth 0.959 → 0.921 and the ghost table
+  0.971 → 0.921. The depth-4 tree (46 parameters) scores 0.935, behind
+  logistic regression (8 parameters), so the simpler model was kept.
+
+![Parameter sweep](results/plots/sweep.png)
+
+* **k** (pages sampled per fault): 4 → 0.949, 8 → 0.929, 16 → 0.921, and no
+  gain beyond that, so `k = 16` is the knee.
+* **Confidence threshold**: flat up to 0.8. At 0.9 the fallback takes almost
+  every decision and the policy becomes LRU-like (0.992). With the default 0.5
+  the fallback almost never fires; the guard does the safety work.
+* **Label horizon H**: from 0.5 to 8 × frames the score moves only from 0.930 to
+  0.919, so the method is not sensitive to it. The default stays at 2.
+
 ## Evaluation parameters
 
 * Fault rate and hit ratio, per trace and memory size

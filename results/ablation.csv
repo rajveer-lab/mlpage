@@ -1,0 +1,16 @@
+variant,validation_faults_vs_lru
+all features,0.9826
+without age,0.9824
+without count,1.1146
+without gap1,0.9823
+without gap2,0.9834
+without gap3,0.9827
+without mean_gap,0.9813
+without age_over_mean_gap,1.0027
+only recency,2.5047
+only frequency,2.1629
+only gap history,1.0307
+design: full (guard on),0.9213
+design: no DAgger rounds,0.9589
+design: no ghost table,0.9712
+design: tree instead of logistic,0.9351
