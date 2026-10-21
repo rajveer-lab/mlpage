@@ -144,7 +144,7 @@ code, .mono { font-family: var(--font-data); font-size: 0.92em; }
   flex: 1 1 0; min-width: 0; display: flex; align-items: center; justify-content: center; gap: 6px;
   min-height: 46px; padding: 0 4px; margin-bottom: -1px;
   text-decoration: none; color: var(--ink-2); font-weight: 500; font-size: 14.5px;
-  border-bottom: 2px solid transparent;
+  border-bottom: 2px solid var(--paper);
 }
 .tabs a .ix { font: 500 11px var(--font-data); color: var(--ink-2); display: none; }
 .tabs a:hover { color: var(--ink); }
@@ -263,7 +263,7 @@ legend + * { clear: both; }
 .progress span { display: block; height: 100%; width: 0; background: var(--ink); transition: width 0.2s ease; }
 .actions-row { display: flex; gap: 8px; }
 .btn {
-  flex: 1 1 0; min-width: 0; min-height: 46px; padding: 0 12px; cursor: pointer;
+  flex: 1 1 0; min-width: 0; min-height: 46px; padding: 0 8px; cursor: pointer;
   border: 1px solid var(--ink); border-radius: 3px; background: var(--sheet); color: var(--ink);
   font: 600 14.5px var(--font-ui);
 }
@@ -271,6 +271,7 @@ legend + * { clear: both; }
 .btn.primary { background: var(--ink); color: var(--paper); }
 .btn.primary:hover { background: var(--ink); opacity: 0.92; }
 .btn:disabled { opacity: 0.45; cursor: default; }
+#stop-btn { order: -1; }
 .btn.small { flex: none; min-height: 44px; font-size: 13px; padding: 0 12px; font-weight: 500; border-color: var(--rule); }
 .status { margin: 7px 0 0; font: 12.5px/1.4 var(--font-data); color: var(--ink-2); min-height: 1.4em; }
 
@@ -343,16 +344,19 @@ svg, .opt label, .btn, .tabs a, summary { -webkit-tap-highlight-color: transpare
 .scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; max-width: 100%; min-width: 0; border: 1px solid var(--rule); border-radius: 3px; background: var(--sheet); margin: 8px 0; }
 table.data { border-collapse: separate; border-spacing: 0; width: 100%; font-size: 13.5px; }
 .data caption { text-align: left; padding: 8px 10px 0; font-size: 12.5px; color: var(--ink-2); }
-.data th, .data td { padding: 8px 10px; text-align: right; white-space: nowrap; border-bottom: 1px solid var(--grid); }
-.data thead th { font: 600 11.5px/1.3 var(--font-ui); color: var(--ink-2); vertical-align: bottom; white-space: normal; min-width: 58px; border-bottom: 1px solid var(--rule); }
+.data th, .data td { padding: 8px 9px; text-align: right; white-space: nowrap; border-bottom: 1px solid var(--grid); }
+.data thead th { font: 600 11.5px/1.3 var(--font-ui); color: var(--ink-2); vertical-align: bottom; white-space: normal; min-width: 56px; border-bottom: 1px solid var(--rule); }
 .data thead tr.grp th { text-align: center; color: var(--ink); border-bottom: 1px solid var(--rule); padding-bottom: 4px; }
 .data th:first-child, .data td:first-child { text-align: left; position: sticky; left: 0; z-index: 1; background: var(--sheet); }
 .data td { font-family: var(--font-data); font-variant-numeric: tabular-nums; }
 .data td:first-child { font-family: var(--font-data); font-weight: 500; }
 .data tbody tr:last-child td { border-bottom: 0; }
 .data tr.all td { border-top: 1px solid var(--ink-2); font-weight: 600; }
+.data tr.hl td { font-weight: 600; background: var(--ink-wash); }
 .data td.best { font-weight: 700; }
 .data td.muted { color: var(--ink-2); }
+#run-table thead th:nth-child(6) { min-width: 118px; }
+#run-table thead th:nth-child(4), #run-table thead th:nth-child(5) { min-width: 84px; }
 .data .nw { white-space: nowrap; font-weight: 400; }
 .pcell { display: inline-flex; align-items: center; gap: 7px; }
 details { margin: 6px 0 4px; }
@@ -400,12 +404,13 @@ table.ft { border-collapse: separate; border-spacing: 0; font-family: var(--font
 .sw { display: inline-grid; place-items: center; width: 22px; height: 20px; font: 600 11px var(--font-data); border: 1px solid var(--grid); }
 .sw.new { background: var(--fault-wash); }
 .sw.hit { box-shadow: inset 0 0 0 2px var(--ink-2); }
-.sw.f { color: var(--fault); border-color: transparent; }
+.sw.f { color: var(--fault); border-color: var(--paper); }
 .sw.vic { color: var(--ink-2); font-weight: 400; }
 
 /* results */
 .hero { display: grid; gap: 12px; grid-template-columns: minmax(0, 1fr); align-items: start; }
 @media (min-width: 720px) { .hero { grid-template-columns: minmax(0, 1fr) minmax(0, 1.2fr); } }
+#res-headline { margin-top: 12px; }
 .hero-fig { padding: 12px 14px; background: var(--sheet); border: 1px solid var(--rule); border-left: 3px solid var(--c-learned); border-radius: 2px; }
 .big { display: block; font-size: 52px; line-height: 1; font-weight: 600; letter-spacing: -0.03em; }
 .hero-fig .cap { display: block; margin-top: 8px; font-size: 13.5px; color: var(--ink-2); }
@@ -644,7 +649,7 @@ footer a { display: inline-flex; align-items: center; min-height: 44px; margin-r
       </details>
 
       <h2 class="sec"><span class="no">03</span>Score a page</h2>
-      <p class="note">Describe one resident page at the moment of a page fault. A gap is the number of references between two uses of the page.</p>
+      <p class="note">Describe one resident page at the moment of a page fault. Age is the number of references since the page was last used; reference count is how often it has been used; a gap is the number of references between two of its uses.</p>
       <div class="presets" id="calc-presets">
         <button type="button" class="btn small" id="calc-preset-hot">Hot page</button>
         <button type="button" class="btn small" id="calc-preset-once">Used once, long ago</button>
@@ -1102,7 +1107,7 @@ footer a { display: inline-flex; align-items: center; min-height: 44px; margin-r
     var valW = Math.ceil(maxW(rows.map(function (r) { return cfg.fmt(r.value); }), 11.5, "data", 500)) + 14;
     var x0 = labelW + (stacked ? 4 : 0), x1 = w - valW, xm = (x0 + x1) / 2, half = (x1 - x0) / 2;
     var amax = rows.reduce(function (m, r) { return Math.max(m, Math.abs(r.value)); }, 0);
-    var dom = niceDomain(amax, Math.max(1, Math.floor(half / 40)));
+    var dom = niceDomain(amax, Math.max(1, Math.floor(half / (stacked ? 40 : 70))));
     function X(v) { return xm + (v / dom.max) * half; }
     var top = 24, plotH = rows.length * band, H = top + plotH + 24;
     var s = svgRoot(w, H, cfg.aria);
@@ -1137,7 +1142,7 @@ footer a { display: inline-flex; align-items: center; min-height: 44px; margin-r
     var valW = Math.ceil(maxW(cfg.groups.reduce(function (a, g) { return a.concat(g.rows.map(function (r) { return cfg.fmt(r.value); })); }, []), 11.5, "data", 500)) + 12;
     var x0 = 2, x1 = w - valW;
     var vmax = cfg.groups.reduce(function (m, g) { return g.rows.reduce(function (m2, r) { return Math.max(m2, r.value); }, m); }, cfg.ref.value);
-    var dom = niceDomain(vmax, Math.max(2, Math.floor((x1 - x0) / 60)));
+    var dom = niceDomain(vmax, Math.max(3, Math.floor((x1 - x0) / 90)));
     function X(v) { return x0 + (v / dom.max) * (x1 - x0); }
     var top = 20, plotH = cfg.groups.reduce(function (h, g) { return h + groupH + g.rows.length * rowH; }, 0);
     var H = top + plotH + 24;
@@ -1418,8 +1423,8 @@ footer a { display: inline-flex; align-items: center; min-height: 44px; margin-r
     // table
     var online = res.rows.filter(function (r) { return r.policy !== "OPT"; });
     var best = Math.min.apply(null, online.map(function (r) { return r.faults; }));
-    var timeHead = res.source === "python" ? "Time per fault (" + MU + ", Python)" : "Time per fault (" + MU + ", measured in this browser)";
-    tableFrom($("#run-table"), ["Policy", "Page faults", "Fault rate", "Fewer faults than LRU", "Gap to OPT closed", timeHead, "Learned: LRU fallback", "Learned: guard on"],
+    var timeHead = res.source === "python" ? "Time per fault, " + MU + " (Python)" : "Time per fault, " + MU + " (measured in this browser)";
+    tableFrom($("#run-table"), ["Policy", "Page faults", "Fault rate", "Fewer faults than LRU", "Gap to OPT closed", timeHead, "Fallback (Learned)", "Guard (Learned)"],
       res.rows.map(function (r) {
         var rr = M.faultReduction(lru.faults, r.faults), gc = M.gapClosed(lru.faults, r.faults, opt.faults);
         var isBest = r.policy !== "OPT" && r.faults === best;
@@ -1749,7 +1754,7 @@ footer a { display: inline-flex; align-items: center; min-height: 44px; margin-r
     var red = {}, gap = {};
     rivals.forEach(function (p) { red[p] = meanReduction(cases, p); gap[p] = pooledGap(cases, p); });
 
-    $("#res-lede").textContent = "Measured by the Python simulator (python -m mlpr evaluate) on the unseen test traces" + (D.source ? ", commit " + D.source : "") + ". Nothing in this view is recomputed in the browser.";
+    $("#res-lede").textContent = "Measured by the Python simulator (python -m mlpr evaluate) on the unseen test traces and copied from results/results.csv" + (D.source ? " when this page was built (commit " + D.source + ")" : "") + ". Nothing in this view is recomputed in the browser.";
 
     var hero = $("#res-hero");
     hero.textContent = "";
@@ -1918,12 +1923,12 @@ footer a { display: inline-flex; align-items: center; min-height: 44px; margin-r
 
   // ------------------------------------------------------------------ calculator
   var CALC_FIELDS = [
-    { id: "calc-frames", label: "Frames in memory", min: 1, def: 100 },
-    { id: "calc-age", label: "Age: references since last use", min: 0, def: 300 },
-    { id: "calc-count", label: "References to the page so far", min: 1, def: 8 },
-    { id: "calc-gap1", label: "Gap 1 (newest)", min: 1, def: 20, gap: 1 },
+    { id: "calc-frames", label: "Frames", min: 1, def: 100 },
+    { id: "calc-age", label: "Age", min: 0, def: 300 },
+    { id: "calc-count", label: "Reference count", min: 1, def: 8 },
+    { id: "calc-gap1", label: "Gap 1, newest", min: 1, def: 20, gap: 1 },
     { id: "calc-gap2", label: "Gap 2", min: 1, def: 25, gap: 2 },
-    { id: "calc-gap3", label: "Gap 3 (oldest)", min: 1, def: 30, gap: 3 }
+    { id: "calc-gap3", label: "Gap 3, oldest", min: 1, def: 30, gap: 3 }
   ];
   var CALC_PRESETS = {
     hot: { frames: 100, age: 3, count: 40, gaps: [4, 3, 5] },
@@ -2117,7 +2122,7 @@ footer a { display: inline-flex; align-items: center; min-height: 44px; margin-r
     var best = rows.reduce(function (b, r) { return r.validation_faults_vs_lru < b.validation_faults_vs_lru ? r : b; }, rows[0]);
     var worst = rows.reduce(function (b, r) { return r.validation_faults_vs_lru > b.validation_faults_vs_lru ? r : b; }, rows[0]);
     $("#sweep-finding").textContent = "Best " + p + " = " + best.value + " (" + fmtNum(best.validation_faults_vs_lru, 4) + "), worst " + p + " = " + worst.value + " (" + fmtNum(worst.validation_faults_vs_lru, 4) + ")" + (usedIdx >= 0 ? "; the model uses " + p + " = " + used + " (" + fmtNum(rows[usedIdx].validation_faults_vs_lru, 4) + ")." : ".");
-    tableFrom($("#sweep-param-table"), [p, "Faults vs LRU"], rows.map(function (r, i) { return { cls: i === usedIdx ? "all" : null, cells: [String(r.value) + (i === usedIdx ? " (in use)" : ""), fmtNum(r.validation_faults_vs_lru, 4)] }; }), { caption: "Sweep of " + p });
+    tableFrom($("#sweep-param-table"), [p, "Faults vs LRU"], rows.map(function (r, i) { return { cls: i === usedIdx ? "hl" : null, cells: [String(r.value) + (i === usedIdx ? " (in use)" : ""), fmtNum(r.validation_faults_vs_lru, 4)] }; }), { caption: "Sweep of " + p });
   }
 
   // ================================================================== start
